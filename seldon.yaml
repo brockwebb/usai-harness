@@ -1,0 +1,15 @@
+event_store:
+  path: seldon_events.jsonl
+neo4j:
+  database: seldon-usai-harness
+  uri: bolt://localhost:7687
+project:
+  created_at: '2026-04-22T20:40:15.535124Z'
+  domain: research
+  name: usai-harness
+  slug: usai-harness
+shared_ontology:
+  inheritance: read-only
+  source: /Users/brock/Documents/GitHub/seldon/ontology
+  vocabularies:
+  - validity/VALIDITY_VOCABULARY.md
