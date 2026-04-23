@@ -20,6 +20,10 @@ build/
 cost_ledger.jsonl
 logs/
 
+# Integration test artifacts
+tests/integration/logs/
+tests/integration/cost_ledger.jsonl
+
 # Working directories
 cc_tasks/
 handoffs/
