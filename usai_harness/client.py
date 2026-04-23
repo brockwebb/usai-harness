@@ -9,17 +9,344 @@ Responsibilities:
 Inputs:
     - project: str — project name for logging and cost attribution
     - config_path: Optional[str] — path to project-specific config YAML
-    - env_path: Optional[str] — path to .env file (default: repo root)
+    - env_path: Optional[str] — path to .env file (default: discovered)
     - workers: int — number of async workers (default: 3)
+    - transport_backend: str — "httpx" (default) or "litellm"
+    - transport: Optional[BaseTransport] — inject transport directly (primarily for tests)
+    - log_dir: Optional[path] — directory for per-run log files
+    - ledger_path: Optional[path] — path to append-only cost ledger
 
 Outputs:
     - complete() returns response dict (OpenAI-format)
-    - batch() returns list of response dicts + generates post-run report
+    - batch() returns list[TaskResult] and prints a post-run report
 """
+
+import asyncio
+import logging
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Optional
+
+from usai_harness.config import ConfigLoader, ProjectConfig
+from usai_harness.cost import CostTracker
+from usai_harness.key_manager import KeyManager
+from usai_harness.logger import CallLogger
+from usai_harness.rate_limiter import RateLimiter
+from usai_harness.report import format_report, generate_report
+from usai_harness.transport import BaseTransport, get_transport
+from usai_harness.worker_pool import Task, TaskResult, WorkerPool
+
+log = logging.getLogger("usai_harness.client")
+
+MAX_COMPLETE_RETRIES = 3
 
 
 class USAiClient:
-    """Placeholder — implementation pending."""
+    """Main entry point for USAi Harness. Wires all components together."""
 
-    def __init__(self, *args, **kwargs):
-        raise NotImplementedError("USAiClient implementation pending")
+    def __init__(
+        self,
+        project: str,
+        config_path: Optional[Path] = None,
+        env_path: Optional[Path] = None,
+        workers: Optional[int] = None,
+        transport_backend: str = "httpx",
+        transport_kwargs: Optional[dict] = None,
+        transport: Optional[BaseTransport] = None,
+        log_dir: Optional[Path] = None,
+        ledger_path: Optional[Path] = None,
+    ):
+        self.project = project
+
+        # 1. Config
+        self._loader = ConfigLoader()
+        if config_path is not None:
+            self.config: ProjectConfig = self._loader.load_project_config(config_path)
+        else:
+            default_model = self._loader.get_default_model()
+            self.config = ProjectConfig(
+                model=default_model,
+                max_tokens=default_model.max_output_tokens,
+            )
+
+        self._workers = workers if workers is not None else self.config.workers
+
+        # 2. Key Manager (fails loud if expired or missing)
+        self._key_manager = KeyManager(env_path=env_path)
+
+        # 3. Transport (accept injected instance for tests)
+        if transport is not None:
+            self._transport = transport
+        else:
+            self._transport = get_transport(
+                transport_backend, **(transport_kwargs or {})
+            )
+
+        # 4. Rate Limiter (shared across all workers)
+        self._rate_limiter = RateLimiter()
+
+        # 5. Logger
+        log_dir = log_dir if log_dir is not None else Path("logs")
+        self._logger = CallLogger(log_dir=log_dir, project=project)
+
+        # 6. Cost Tracker
+        self._cost_tracker = CostTracker(
+            model_name=self.config.model.name,
+            cost_per_1k_input=self.config.model.cost_per_1k_input_tokens,
+            cost_per_1k_output=self.config.model.cost_per_1k_output_tokens,
+            ledger_path=ledger_path if ledger_path is not None else Path("cost_ledger.jsonl"),
+        )
+
+        self._complete_counter = 0
+        self._closed = False
+
+        log.info(
+            "USAi Harness initialized: project=%s model=%s workers=%d transport=%s",
+            project, self.config.model.name, self._workers, transport_backend,
+        )
+
+    # ---- single-call API --------------------------------------------------
+
+    async def complete(
+        self,
+        messages: list[dict],
+        model: Optional[str] = None,
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        system_prompt: Optional[str] = None,
+        task_id: Optional[str] = None,
+        **kwargs,
+    ) -> dict:
+        """Make one completion call with rate limiting, logging, and cost tracking.
+
+        Retries up to MAX_COMPLETE_RETRIES on HTTP 429 with exponential backoff.
+        Non-retryable errors and exhausted retries return the error body (still logged).
+        """
+        model_name = model if model is not None else self.config.model.name
+        temp = temperature if temperature is not None else self.config.temperature
+        mt = max_tokens if max_tokens is not None else self.config.max_tokens
+        sp = system_prompt if system_prompt is not None else self.config.system_prompt
+
+        if task_id is None:
+            task_id = f"{self.project}_complete_{self._complete_counter:04d}"
+            self._complete_counter += 1
+
+        body: dict = {}
+        status: int = 0
+        latency_ms: float = 0.0
+
+        for attempt in range(MAX_COMPLETE_RETRIES):
+            await self._rate_limiter.acquire()
+            start = time.monotonic()
+            try:
+                body, status = await self._transport.send(
+                    base_url=self._key_manager.base_url,
+                    api_key=self._key_manager.api_key,
+                    model=model_name,
+                    messages=messages,
+                    temperature=temp,
+                    max_tokens=mt,
+                    system_prompt=sp,
+                    **kwargs,
+                )
+            except Exception as e:
+                latency_ms = (time.monotonic() - start) * 1000.0
+                log.error("complete() transport error on task %s: %s", task_id, e)
+                self._record_outcome(
+                    task_id=task_id, model=model_name, status_code=0,
+                    latency_ms=latency_ms, response=None, error=str(e),
+                    success=False,
+                )
+                raise
+
+            latency_ms = (time.monotonic() - start) * 1000.0
+
+            if 200 <= status < 300:
+                self._rate_limiter.record_success()
+                self._record_outcome(
+                    task_id=task_id, model=model_name, status_code=status,
+                    latency_ms=latency_ms, response=body, error=None,
+                    success=True,
+                )
+                return body
+
+            if status == 429:
+                self._rate_limiter.record_429()
+                if attempt < MAX_COMPLETE_RETRIES - 1:
+                    await asyncio.sleep(2 ** attempt)
+                    continue
+
+            break
+
+        # Retries exhausted, or non-retryable status.
+        self._record_outcome(
+            task_id=task_id, model=model_name, status_code=status,
+            latency_ms=latency_ms, response=body,
+            error=f"HTTP {status}",
+            success=False,
+        )
+        return body
+
+    # ---- batch API --------------------------------------------------------
+
+    async def batch(
+        self,
+        tasks: list[dict],
+        job_name: Optional[str] = None,
+    ) -> list[TaskResult]:
+        """Process a list of task dicts through the worker pool.
+
+        Each task dict must contain `messages`. Optional: `model`, `temperature`,
+        `max_tokens`, `system_prompt`, `task_id`, `metadata`, plus any provider
+        kwargs to forward.
+        """
+        if not tasks:
+            return []
+
+        job_name = job_name or self.project
+        task_objs = self._build_tasks(tasks, job_name)
+
+        pool = WorkerPool(
+            rate_limiter=self._rate_limiter,
+            request_fn=self._make_request,
+            n_workers=self._workers,
+        )
+
+        start = time.monotonic()
+        results = await pool.run_batch(task_objs)
+        duration = time.monotonic() - start
+
+        for r in results:
+            self._record_result(r)
+
+        self._cost_tracker.write_summary(
+            job_id=self._logger.job_id,
+            job_name=job_name,
+            project=self.project,
+            model=self.config.model.name,
+            duration_seconds=duration,
+        )
+
+        report = generate_report(self._logger.get_log_path())
+        if report:
+            print(format_report(report))
+
+        return results
+
+    # ---- internals --------------------------------------------------------
+
+    def _build_tasks(self, tasks: list[dict], job_name: str) -> list[Task]:
+        reserved = {"messages", "model", "temperature", "max_tokens",
+                    "system_prompt", "task_id", "metadata"}
+        out: list[Task] = []
+        for i, t in enumerate(tasks):
+            if "messages" not in t:
+                raise ValueError(
+                    f"Task at index {i} is missing required 'messages' field."
+                )
+            payload = {
+                "messages": t["messages"],
+                "model": t.get("model", self.config.model.name),
+                "temperature": t.get("temperature", self.config.temperature),
+                "max_tokens": t.get("max_tokens", self.config.max_tokens),
+                "system_prompt": t.get("system_prompt", self.config.system_prompt),
+            }
+            for k, v in t.items():
+                if k not in reserved:
+                    payload[k] = v
+            task_id = t.get("task_id") or f"{job_name}_{i:04d}"
+            out.append(Task(
+                task_id=task_id,
+                payload=payload,
+                metadata=t.get("metadata", {}),
+            ))
+        return out
+
+    async def _make_request(self, payload: dict) -> tuple[dict, int]:
+        """request_fn handed to the worker pool."""
+        extra = {
+            k: v for k, v in payload.items()
+            if k not in {"messages", "model", "temperature",
+                         "max_tokens", "system_prompt"}
+        }
+        return await self._transport.send(
+            base_url=self._key_manager.base_url,
+            api_key=self._key_manager.api_key,
+            model=payload["model"],
+            messages=payload["messages"],
+            temperature=payload["temperature"],
+            max_tokens=payload["max_tokens"],
+            system_prompt=payload.get("system_prompt"),
+            **extra,
+        )
+
+    def _record_outcome(
+        self,
+        *,
+        task_id: str,
+        model: str,
+        status_code: int,
+        latency_ms: float,
+        response: Optional[dict],
+        error: Optional[str],
+        success: bool,
+    ) -> None:
+        usage = {}
+        if isinstance(response, dict):
+            u = response.get("usage")
+            if isinstance(u, dict):
+                usage = u
+
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "task_id": task_id,
+            "model": model,
+            "status_code": status_code,
+            "latency_ms": latency_ms,
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+            "error": error,
+            "success": success,
+        }
+        self._logger.log_call(entry)
+        self._cost_tracker.record_call(response or {}, success=success)
+
+    def _record_result(self, result: TaskResult) -> None:
+        model = result.payload.get("model", self.config.model.name)
+        response = result.response if isinstance(result.response, dict) else {}
+        usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+
+        entry = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "task_id": result.task_id,
+            "model": model,
+            "status_code": result.status_code if result.status_code is not None else 0,
+            "latency_ms": result.latency_ms,
+            "prompt_tokens": usage.get("prompt_tokens"),
+            "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens"),
+            "error": result.error,
+            "success": result.success,
+        }
+        self._logger.log_call(entry)
+        self._cost_tracker.record_call(response, success=result.success)
+
+    # ---- lifecycle --------------------------------------------------------
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await self._transport.close()
+        finally:
+            self._logger.close()
+        log.info("USAi Harness shut down.")
+
+    async def __aenter__(self) -> "USAiClient":
+        return self
+
+    async def __aexit__(self, *exc) -> None:
+        await self.close()

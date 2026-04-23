@@ -39,3 +39,6 @@ calls against USAi. See README.md for usage.
 - Key expiry: 7 days from issued_at
 - Key issued_at default: now() - 4 hours (manual key process buffer)
 - Cost rates: zeros for now (free credits), update when billing activates
+- Transport layer: pluggable via `transport.py`. Default: `httpx` (zero LLM framework deps).
+  Optional: LiteLLM (`pip install -e ".[litellm]"`) — plumbed but not yet implemented.
+- `client.py` is the integration point. All other modules are independent.
