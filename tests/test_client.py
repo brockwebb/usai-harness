@@ -1,15 +1,12 @@
 """Tests for USAiClient integration layer."""
 
-import hashlib
 import json
 import textwrap
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
 from usai_harness.client import USAiClient
-from usai_harness.key_manager import KeyExpiredError
 from usai_harness.transport import BaseTransport
 
 pytestmark = pytest.mark.asyncio
@@ -94,27 +91,6 @@ async def test_client_init_success(tmp_path, env_path):
         assert (tmp_path / "logs").exists()
     finally:
         await client.close()
-
-
-async def test_client_init_expired_key_fails(tmp_path, env_path):
-    api_key = "test-key-AAAAAAAA"
-    meta = tmp_path / ".usai_key_meta.json"
-    key_hash = hashlib.sha256(api_key[-8:].encode()).hexdigest()
-    expired = (datetime.now(timezone.utc) - timedelta(days=8)).isoformat()
-    meta.write_text(json.dumps({
-        "key_hash": key_hash,
-        "issued_at": expired,
-        "rotations": [],
-    }))
-
-    with pytest.raises(KeyExpiredError):
-        USAiClient(
-            project="test-proj",
-            env_path=env_path,
-            transport=MockTransport(),
-            log_dir=tmp_path / "logs",
-            ledger_path=tmp_path / "ledger.jsonl",
-        )
 
 
 async def test_complete_single_call(tmp_path, env_path):

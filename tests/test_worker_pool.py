@@ -6,7 +6,7 @@ import time
 import pytest
 
 from usai_harness.rate_limiter import RateLimiter
-from usai_harness.worker_pool import Task, TaskResult, WorkerPool
+from usai_harness.worker_pool import AuthHaltError, Task, TaskResult, WorkerPool
 
 pytestmark = pytest.mark.asyncio
 
@@ -159,11 +159,10 @@ async def test_concurrent_workers():
 
 
 async def test_non_retryable_status_codes():
+    """4xx other than 429/401/403 must not retry; 401/403 are covered by halt tests."""
     responses = {
         "t1": ({"err": "bad"}, 400),
-        "t2": ({"err": "auth"}, 401),
-        "t3": ({"err": "forbidden"}, 403),
-        "t4": ({"err": "not found"}, 404),
+        "t2": ({"err": "not found"}, 404),
     }
     fn = _make_mock_request_fn(responses_by_id=responses)
     pool = WorkerPool(_make_limiter(), fn, n_workers=1, max_retries=3)
@@ -171,8 +170,7 @@ async def test_non_retryable_status_codes():
     results = await pool.run_batch(tasks)
 
     assert all(not r.success for r in results)
-    # No retries on non-429 4xx: one call per task, not max_retries per task.
-    assert len(fn.call_log) == 4
+    assert len(fn.call_log) == len(responses)
 
 
 async def test_results_include_latency():
@@ -196,3 +194,65 @@ async def test_results_echo_metadata():
 
     assert all(r.metadata["source"] == "test" for r in results)
     assert {r.metadata["index"] for r in results} == {0, 1, 2}
+
+
+async def test_401_halts_pool_and_preserves_results():
+    """First two tasks succeed, third returns 401, remaining seven are deferred.
+
+    Results are read from `pool.results` after catching AuthHaltError.
+    """
+    responses = {
+        "t00": ({"ok": True}, 200),
+        "t01": ({"ok": True}, 200),
+        "t02": ({"err": "auth"}, 401),
+    }
+    fn = _make_mock_request_fn(responses_by_id=responses)
+    pool = WorkerPool(_make_limiter(), fn, n_workers=1, max_retries=3)
+    tasks = [
+        Task(task_id=f"t{i:02d}", payload={"task_id": f"t{i:02d}"})
+        for i in range(10)
+    ]
+
+    start = time.monotonic()
+    with pytest.raises(AuthHaltError) as excinfo:
+        await pool.run_batch(tasks)
+    elapsed = time.monotonic() - start
+
+    assert excinfo.value.status_code == 401
+    assert elapsed < 1.0, f"halt took {elapsed:.3f}s, expected <1s"
+
+    results = pool.results
+    assert len(results) == 10
+    successes = [r for r in results if r.success]
+    halted = [r for r in results
+              if not r.success and r.status_code == 401]
+    deferred = [r for r in results if r.error == "auth_halt_deferred"]
+
+    assert len(successes) == 2
+    assert {r.task_id for r in successes} == {"t00", "t01"}
+    assert len(halted) == 1 and halted[0].task_id == "t02"
+    assert len(deferred) == 7
+    # Deferred tasks never reach the request function.
+    assert len(fn.call_log) == 3
+
+
+async def test_403_halts_pool():
+    """403 triggers the same halt path as 401."""
+    responses = {
+        "t00": ({"ok": True}, 200),
+        "t01": ({"err": "forbidden"}, 403),
+    }
+    fn = _make_mock_request_fn(responses_by_id=responses)
+    pool = WorkerPool(_make_limiter(), fn, n_workers=1, max_retries=3)
+    tasks = [
+        Task(task_id=f"t{i:02d}", payload={"task_id": f"t{i:02d}"})
+        for i in range(5)
+    ]
+
+    with pytest.raises(AuthHaltError) as excinfo:
+        await pool.run_batch(tasks)
+
+    assert excinfo.value.status_code == 403
+    results = pool.results
+    deferred = [r for r in results if r.error == "auth_halt_deferred"]
+    assert len(deferred) == 3

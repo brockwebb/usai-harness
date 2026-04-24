@@ -49,10 +49,8 @@ async def _test_init(results: dict) -> USAiClient:
         raise
 
     domain = urlparse(client._key_manager.base_url).netloc or "(unknown)"
-    expires = client._key_manager.expires_at.isoformat()
     detail = (
-        f"model={client.config.model.name} base_url_domain={domain} "
-        f"key_expires={expires}"
+        f"model={client.config.model.name} base_url_domain={domain}"
     )
     _record(results, name, True, detail=detail)
     print(f"  [init] {detail}")

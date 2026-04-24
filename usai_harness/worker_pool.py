@@ -28,6 +28,25 @@ log = logging.getLogger("usai_harness.worker_pool")
 RequestFn = Callable[[dict], Awaitable[tuple[dict, int]]]
 
 
+class AuthHaltError(Exception):
+    """Raised by WorkerPool when the endpoint returns 401/403.
+
+    Halts the pool within 1 second, preserves results collected so far,
+    and surfaces the failing task's status and body so the caller can
+    rotate the credential and retry.
+    """
+
+    def __init__(self, status_code: int, task_id: str,
+                 body: Optional[dict] = None):
+        self.status_code = status_code
+        self.task_id = task_id
+        self.body = body
+        super().__init__(
+            f"Endpoint returned {status_code} on task {task_id}. "
+            f"Pool halted. Rotate the credential and retry."
+        )
+
+
 @dataclass
 class Task:
     """A unit of work for the worker pool."""
@@ -62,11 +81,24 @@ class WorkerPool:
         self._queue: Optional[asyncio.Queue] = None
         self._workers: list[asyncio.Task] = []
         self._results: list[TaskResult] = []
+        self._halt_event: Optional[asyncio.Event] = None
+        self._halt_reason: Optional[AuthHaltError] = None
+
+    @property
+    def results(self) -> list[TaskResult]:
+        """Sorted snapshot of collected results. Safe to read after a halt."""
+        return sorted(self._results, key=lambda r: r.task_id)
 
     async def run_batch(self, tasks: list[Task]) -> list[TaskResult]:
-        """Process all tasks across n_workers and return deterministic results."""
+        """Process all tasks across n_workers and return deterministic results.
+
+        Raises AuthHaltError (after gathering in-flight workers) if the endpoint
+        returns 401 or 403. Partial results are still available via `self.results`.
+        """
         self._queue = asyncio.Queue()
         self._results = []
+        self._halt_event = asyncio.Event()
+        self._halt_reason = None
 
         for task in tasks:
             await self._queue.put(task)
@@ -80,17 +112,46 @@ class WorkerPool:
         ]
         await asyncio.gather(*self._workers, return_exceptions=False)
 
-        return sorted(self._results, key=lambda r: r.task_id)
+        sorted_results = sorted(self._results, key=lambda r: r.task_id)
+        if self._halt_reason is not None:
+            raise self._halt_reason
+        return sorted_results
 
     async def _worker_loop(self) -> None:
         assert self._queue is not None
+        assert self._halt_event is not None
         while True:
+            if self._halt_event.is_set():
+                self._drain_as_deferred()
+                return
             item = await self._queue.get()
             try:
                 if item is None:
                     return
+                if self._halt_event.is_set():
+                    self._results.append(self._failed(
+                        item, error="auth_halt_deferred",
+                    ))
+                    continue
                 result = await self._process_task(item)
                 self._results.append(result)
+            finally:
+                self._queue.task_done()
+
+    def _drain_as_deferred(self) -> None:
+        """Convert any remaining queued non-sentinel items to deferred failures."""
+        assert self._queue is not None
+        while not self._queue.empty():
+            try:
+                item = self._queue.get_nowait()
+            except asyncio.QueueEmpty:
+                break
+            try:
+                if item is None:
+                    continue
+                self._results.append(self._failed(
+                    item, error="auth_halt_deferred",
+                ))
             finally:
                 self._queue.task_done()
 
@@ -114,6 +175,21 @@ class WorkerPool:
             latency_ms = (time.monotonic() - start) * 1000.0
             last_status = status
             last_latency_ms = latency_ms
+
+            if status in (401, 403):
+                # Auth failure: do not penalize the rate limiter, do not retry.
+                self.rate_limiter.record_success()
+                halt_result = self._failed(
+                    task,
+                    error=f"HTTP {status}: authentication failed",
+                    status_code=status,
+                    latency_ms=latency_ms,
+                    response=body,
+                )
+                self._halt_reason = AuthHaltError(status, task.task_id, body)
+                if self._halt_event is not None:
+                    self._halt_event.set()
+                return halt_result
 
             if 200 <= status < 300:
                 self.rate_limiter.record_success()
