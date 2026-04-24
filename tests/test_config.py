@@ -12,6 +12,7 @@ from usai_harness.config import (
     ConfigValidationError,
     ModelConfig,
     ProjectConfig,
+    ProviderConfig,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -36,7 +37,7 @@ def test_get_model_valid():
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
     m = loader.get_model("llama-4-maverick")
     assert m.name == "llama-4-maverick"
-    assert m.provider == "meta"
+    assert m.provider == "usai"
     assert m.context_window == 131072
     assert m.max_output_tokens == 32768
     assert m.supports_temperature is True
@@ -179,3 +180,137 @@ def test_model_config_is_frozen():
     m = loader.get_model("llama-4-maverick")
     with pytest.raises(FrozenInstanceError):
         m.name = "hacked"  # type: ignore[misc]
+
+
+# ---------- providers block (ADR-003, ADR-008) ----------------------------
+
+
+def _write_models_yaml(tmp_path: Path, body: str) -> Path:
+    path = tmp_path / "models.yaml"
+    path.write_text(textwrap.dedent(body).lstrip())
+    return path
+
+
+_MINIMAL_MODEL_BLOCK = """
+models:
+  demo-model:
+    provider: usai
+    context_window: 1000
+    max_output_tokens: 100
+    supports_temperature: true
+    temperature_range: [0.0, 1.0]
+    supports_system_prompt: true
+    cost_per_1k_input_tokens: 0.0
+    cost_per_1k_output_tokens: 0.0
+
+default_model: demo-model
+"""
+
+
+def test_providers_block_parsed(tmp_path):
+    yaml_body = (
+        """
+        providers:
+          usai:
+            base_url: https://example.com/v1
+            api_key_env: USAI_API_KEY
+        """
+        + _MINIMAL_MODEL_BLOCK
+    )
+    path = _write_models_yaml(tmp_path, yaml_body)
+    loader = ConfigLoader(models_config_path=path)
+
+    assert loader.list_providers() == ["usai"]
+    p = loader.get_provider("usai")
+    assert isinstance(p, ProviderConfig)
+    assert p.base_url == "https://example.com/v1"
+    assert p.api_key_env == "USAI_API_KEY"
+
+
+def test_model_provider_mismatch_raises(tmp_path):
+    yaml_body = (
+        """
+        providers:
+          other:
+            base_url: https://other.example.com/v1
+            api_key_env: OTHER_KEY
+        """
+        + _MINIMAL_MODEL_BLOCK
+    )
+    path = _write_models_yaml(tmp_path, yaml_body)
+    with pytest.raises(ConfigValidationError) as exc:
+        ConfigLoader(models_config_path=path)
+    msg = str(exc.value)
+    assert "demo-model" in msg
+    assert "usai" in msg
+
+
+def test_providers_missing_base_url_raises(tmp_path):
+    yaml_body = (
+        """
+        providers:
+          usai:
+            api_key_env: USAI_API_KEY
+        """
+        + _MINIMAL_MODEL_BLOCK
+    )
+    path = _write_models_yaml(tmp_path, yaml_body)
+    with pytest.raises(ConfigValidationError, match="base_url"):
+        ConfigLoader(models_config_path=path)
+
+
+def test_providers_missing_api_key_env_raises(tmp_path):
+    yaml_body = (
+        """
+        providers:
+          usai:
+            base_url: https://example.com/v1
+        """
+        + _MINIMAL_MODEL_BLOCK
+    )
+    path = _write_models_yaml(tmp_path, yaml_body)
+    with pytest.raises(ConfigValidationError, match="api_key_env"):
+        ConfigLoader(models_config_path=path)
+
+
+def test_providers_to_env_map():
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    assert loader.providers_to_env_map() == {"usai": "USAI_API_KEY"}
+
+
+def test_project_config_credentials_backend(tmp_path):
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        model: llama-4-maverick
+        credentials:
+          backend: azure_keyvault
+          vault_url: https://my-vault.vault.azure.net
+    """)
+    pc = loader.load_project_config(cfg)
+
+    assert pc.credentials_backend == "azure_keyvault"
+    assert pc.credentials_kwargs == {
+        "vault_url": "https://my-vault.vault.azure.net",
+    }
+
+
+def test_project_config_credentials_default_is_dotenv(tmp_path):
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        model: llama-4-maverick
+    """)
+    pc = loader.load_project_config(cfg)
+
+    assert pc.credentials_backend == "dotenv"
+    assert pc.credentials_kwargs == {}
+
+
+def test_project_config_unknown_credentials_backend_raises(tmp_path):
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        model: llama-4-maverick
+        credentials:
+          backend: sorcery
+    """)
+    with pytest.raises(ConfigValidationError, match="sorcery"):
+        loader.load_project_config(cfg)

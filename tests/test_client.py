@@ -56,18 +56,24 @@ def _default_response(prompt_tokens=10, completion_tokens=5):
 
 
 @pytest.fixture(autouse=True)
-def _isolate_env(monkeypatch):
-    monkeypatch.delenv("USAI_API_KEY", raising=False)
-    monkeypatch.delenv("USAI_BASE_URL", raising=False)
+def _isolate_env(monkeypatch, tmp_path_factory):
+    """Prevent host USAi env vars and user-level .env from leaking into tests."""
+    for var in ("USAI_API_KEY", "USAI_BASE_URL", "OPENROUTER_API_KEY",
+                "APPDATA", "XDG_CONFIG_HOME"):
+        monkeypatch.delenv(var, raising=False)
+    # Point user_config_env_path at an empty tmp dir so the host user-level
+    # .env is not consulted.
+    empty = tmp_path_factory.mktemp("empty_user_config")
+    monkeypatch.setattr(
+        "usai_harness.key_manager.user_config_env_path",
+        lambda: empty / "usai-harness" / ".env",
+    )
 
 
 @pytest.fixture
 def env_path(tmp_path):
     p = tmp_path / ".env"
-    p.write_text(
-        "USAI_API_KEY=test-key-AAAAAAAA\n"
-        "USAI_BASE_URL=https://example.com/v1\n"
-    )
+    p.write_text("USAI_API_KEY=test-key-AAAAAAAA\n")
     return p
 
 
@@ -206,5 +212,24 @@ async def test_client_defaults_without_config(tmp_path, env_path):
     client = _client(tmp_path, env_path)
     try:
         assert client.config.model.name == "llama-4-maverick"
+        # base_url now comes from the providers block in models.yaml.
+        assert client._base_url.startswith("https://")
+        assert client._api_key == "test-key-AAAAAAAA"
     finally:
         await client.close()
+
+
+async def test_client_init_raises_on_unconfigured_provider(tmp_path):
+    """With no project .env, no user .env, and no env var set, init must fail fast."""
+    from usai_harness.key_manager import CredentialNotFoundError
+
+    missing_env = tmp_path / "does-not-exist.env"
+
+    with pytest.raises(CredentialNotFoundError):
+        USAiClient(
+            project="test-proj",
+            env_path=missing_env,
+            transport=MockTransport(),
+            log_dir=tmp_path / "logs",
+            ledger_path=tmp_path / "ledger.jsonl",
+        )

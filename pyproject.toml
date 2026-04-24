@@ -20,6 +20,10 @@ dependencies = [
 
 [project.optional-dependencies]
 litellm = ["litellm>=1.50"]
+azure = [
+    "azure-identity>=1.15",
+    "azure-keyvault-secrets>=4.7",
+]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",

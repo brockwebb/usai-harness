@@ -30,7 +30,7 @@ from typing import Optional
 
 from usai_harness.config import ConfigLoader, ProjectConfig
 from usai_harness.cost import CostTracker
-from usai_harness.key_manager import KeyManager
+from usai_harness.key_manager import CredentialProvider, make_credential_provider
 from usai_harness.logger import CallLogger
 from usai_harness.rate_limiter import RateLimiter
 from usai_harness.report import format_report, generate_report
@@ -56,6 +56,8 @@ class USAiClient:
         transport: Optional[BaseTransport] = None,
         log_dir: Optional[Path] = None,
         ledger_path: Optional[Path] = None,
+        provider: Optional[str] = None,
+        credentials: Optional[CredentialProvider] = None,
     ):
         self.project = project
 
@@ -72,8 +74,25 @@ class USAiClient:
 
         self._workers = workers if workers is not None else self.config.workers
 
-        # 2. Key Manager (fails loud if expired or missing)
-        self._key_manager = KeyManager(env_path=env_path)
+        # 2. Credential provider (ADR-003, ADR-002).
+        provider_name = provider if provider is not None else self.config.model.provider
+        self._provider_config = self._loader.get_provider(provider_name)
+        if (
+            env_path is not None
+            and self.config.credentials_backend == "dotenv"
+        ):
+            self.config.credentials_kwargs.setdefault("project_env", env_path)
+        if credentials is not None:
+            self._credentials: CredentialProvider = credentials
+        else:
+            self._credentials = make_credential_provider(
+                backend=self.config.credentials_backend,
+                providers=self._loader.providers_to_env_map(),
+                **self.config.credentials_kwargs,
+            )
+        # Resolve once at init to fail fast on missing credentials.
+        self._api_key = self._credentials.get_key(provider_name)
+        self._base_url = self._provider_config.base_url
 
         # 3. Transport (accept injected instance for tests)
         if transport is not None:
@@ -141,8 +160,8 @@ class USAiClient:
             start = time.monotonic()
             try:
                 body, status = await self._transport.send(
-                    base_url=self._key_manager.base_url,
-                    api_key=self._key_manager.api_key,
+                    base_url=self._base_url,
+                    api_key=self._api_key,
                     model=model_name,
                     messages=messages,
                     temperature=temp,
@@ -271,8 +290,8 @@ class USAiClient:
                          "max_tokens", "system_prompt"}
         }
         return await self._transport.send(
-            base_url=self._key_manager.base_url,
-            api_key=self._key_manager.api_key,
+            base_url=self._base_url,
+            api_key=self._api_key,
             model=payload["model"],
             messages=payload["messages"],
             temperature=payload["temperature"],

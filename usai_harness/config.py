@@ -23,7 +23,7 @@ Errors:
 """
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
@@ -38,7 +38,10 @@ MAX_WORKERS = 10
 _KNOWN_PROJECT_FIELDS = frozenset({
     "model", "temperature", "max_tokens",
     "system_prompt", "workers", "batch_size",
+    "credentials",
 })
+
+_VALID_CREDENTIALS_BACKENDS = frozenset({"dotenv", "env_var", "azure_keyvault"})
 
 
 class ConfigValidationError(Exception):
@@ -60,6 +63,14 @@ class ModelConfig:
     cost_per_1k_output_tokens: float
 
 
+@dataclass(frozen=True)
+class ProviderConfig:
+    """Endpoint-provider metadata loaded from the 'providers' block in models.yaml."""
+    name: str
+    base_url: str
+    api_key_env: str
+
+
 @dataclass
 class ProjectConfig:
     """Validated project-level configuration."""
@@ -69,6 +80,8 @@ class ProjectConfig:
     system_prompt: Optional[str] = None
     workers: int = DEFAULT_WORKERS
     batch_size: int = DEFAULT_BATCH_SIZE
+    credentials_backend: str = "dotenv"
+    credentials_kwargs: dict = field(default_factory=dict)
 
 
 class ConfigLoader:
@@ -128,6 +141,38 @@ class ConfigLoader:
                 f"Available: {sorted(self._models)}."
             )
 
+        self._providers: dict[str, ProviderConfig] = {}
+        raw_providers = raw.get("providers", {})
+        if not isinstance(raw_providers, dict):
+            raise ConfigValidationError(
+                f"Invalid {self.models_config_path}: 'providers' must be a mapping if present."
+            )
+        for prov_name, prov_spec in raw_providers.items():
+            if not isinstance(prov_spec, dict):
+                raise ConfigValidationError(
+                    f"Provider '{prov_name}' in {self.models_config_path} "
+                    f"must be a mapping."
+                )
+            try:
+                self._providers[prov_name] = ProviderConfig(
+                    name=prov_name,
+                    base_url=str(prov_spec["base_url"]),
+                    api_key_env=str(prov_spec["api_key_env"]),
+                )
+            except KeyError as e:
+                raise ConfigValidationError(
+                    f"Provider '{prov_name}' in {self.models_config_path} is "
+                    f"missing required field: {e}."
+                ) from e
+
+        for model_name, model_cfg in self._models.items():
+            if model_cfg.provider not in self._providers:
+                raise ConfigValidationError(
+                    f"Model '{model_name}' references provider "
+                    f"'{model_cfg.provider}' which is not defined in the "
+                    f"'providers' block. Known providers: {sorted(self._providers)}."
+                )
+
     def list_models(self) -> list[str]:
         """Return list of available model names."""
         return list(self._models.keys())
@@ -139,6 +184,23 @@ class ConfigLoader:
                 f"Unknown model '{name}'. Available models: {sorted(self._models)}."
             )
         return self._models[name]
+
+    def list_providers(self) -> list[str]:
+        """Return list of registered provider names."""
+        return list(self._providers.keys())
+
+    def get_provider(self, name: str) -> ProviderConfig:
+        """Return the ProviderConfig for the named provider, or raise."""
+        if name not in self._providers:
+            raise ConfigValidationError(
+                f"Unknown provider '{name}'. Available providers: "
+                f"{sorted(self._providers)}."
+            )
+        return self._providers[name]
+
+    def providers_to_env_map(self) -> dict[str, str]:
+        """Return {provider_name: api_key_env} for handing to make_credential_provider."""
+        return {name: cfg.api_key_env for name, cfg in self._providers.items()}
 
     def get_default_model(self) -> ModelConfig:
         """Return the ModelConfig for the yaml's default_model."""
@@ -220,6 +282,23 @@ class ConfigLoader:
                 f"batch_size={batch_size} must be >= 1."
             )
 
+        creds_block = raw.get("credentials", {})
+        if not isinstance(creds_block, dict):
+            raise ConfigValidationError(
+                f"Project config {config_path}: 'credentials' must be a "
+                f"mapping if present."
+            )
+        credentials_backend = creds_block.get("backend", "dotenv")
+        if credentials_backend not in _VALID_CREDENTIALS_BACKENDS:
+            raise ConfigValidationError(
+                f"Project config {config_path}: unknown credentials.backend "
+                f"'{credentials_backend}'. "
+                f"Valid: {sorted(_VALID_CREDENTIALS_BACKENDS)}."
+            )
+        credentials_kwargs = {
+            k: v for k, v in creds_block.items() if k != "backend"
+        }
+
         return ProjectConfig(
             model=model,
             temperature=temperature,
@@ -227,6 +306,8 @@ class ConfigLoader:
             system_prompt=raw.get("system_prompt"),
             workers=workers,
             batch_size=batch_size,
+            credentials_backend=credentials_backend,
+            credentials_kwargs=credentials_kwargs,
         )
 
     def validate_request(self, model_config: ModelConfig,
