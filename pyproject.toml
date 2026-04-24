@@ -30,7 +30,7 @@ dev = [
 ]
 
 [project.scripts]
-usai-harness = "usai_harness.report:cli_main"
+usai-harness = "usai_harness.cli:cli_main"
 
 [tool.setuptools.packages.find]
 include = ["usai_harness*"]

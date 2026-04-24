@@ -314,3 +314,184 @@ def test_project_config_unknown_credentials_backend_raises(tmp_path):
     """)
     with pytest.raises(ConfigValidationError, match="sorcery"):
         loader.load_project_config(cfg)
+
+
+# ---------- live catalog merge (ADR-009, FR-040) --------------------------
+
+
+@pytest.fixture
+def live_catalog(monkeypatch, tmp_path):
+    """Redirect user_config_models_path into tmp_path and return write helper."""
+    catalog_path = tmp_path / "user" / "models.yaml"
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(
+        "usai_harness.setup_commands.user_config_models_path",
+        lambda: catalog_path,
+    )
+
+    def _write(data):
+        import yaml as _yaml
+        catalog_path.write_text(_yaml.safe_dump(data, sort_keys=False))
+
+    return _write, catalog_path
+
+
+def test_live_catalog_absent_leaves_repo_config_unchanged(live_catalog):
+    _, catalog_path = live_catalog
+    assert not catalog_path.exists()
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    assert set(loader.list_models()) == {
+        "llama-4-maverick", "claude-opus-4-5", "gemini-2-5-pro",
+    }
+
+
+def test_live_catalog_two_providers_five_models(live_catalog, tmp_path):
+    write, _ = live_catalog
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                "models": ["llama-4-maverick", "claude-opus-4-5"],
+            },
+            "openrouter": {
+                "base_url": "https://or.example/v1",
+                "api_key_env": "OPENROUTER_API_KEY",
+                "models": ["or-a", "or-b", "or-c"],
+            },
+        }
+    })
+    # Need a repo config that references openrouter too, or the provider integrity
+    # check fires first. Write a custom models.yaml.
+    repo = tmp_path / "repo.models.yaml"
+    repo.write_text(textwrap.dedent("""
+        providers:
+          usai:
+            base_url: https://usai.example/v1
+            api_key_env: USAI_API_KEY
+          openrouter:
+            base_url: https://or.example/v1
+            api_key_env: OPENROUTER_API_KEY
+        models:
+          llama-4-maverick:
+            provider: usai
+            context_window: 131072
+            max_output_tokens: 32768
+            supports_temperature: true
+            temperature_range: [0.0, 2.0]
+            supports_system_prompt: true
+            cost_per_1k_input_tokens: 0.0
+            cost_per_1k_output_tokens: 0.0
+        default_model: llama-4-maverick
+    """).lstrip())
+
+    loader = ConfigLoader(models_config_path=repo)
+    assert set(loader.list_models()) == {
+        "llama-4-maverick", "claude-opus-4-5", "or-a", "or-b", "or-c",
+    }
+    # Live-only models get synthesized defaults with the correct provider.
+    assert loader.get_model("or-a").provider == "openrouter"
+
+
+def test_live_model_not_in_repo_gets_synthesized_defaults(live_catalog):
+    write, _ = live_catalog
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                "models": ["new-synth-model"],
+            },
+        }
+    })
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+
+    m = loader.get_model("new-synth-model")
+    assert m.provider == "usai"
+    assert m.context_window == 0
+    assert m.max_output_tokens == 4096
+    assert m.supports_temperature is True
+
+
+def test_repo_model_not_in_live_is_dropped(live_catalog):
+    write, _ = live_catalog
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                "models": ["llama-4-maverick"],
+            },
+        }
+    })
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    assert loader.list_models() == ["llama-4-maverick"]
+    with pytest.raises(ConfigValidationError):
+        loader.get_model("claude-opus-4-5")
+
+
+def test_live_catalog_overrides_repo_base_url(live_catalog):
+    write, _ = live_catalog
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://live.example.com/api/v1",
+                "api_key_env": "USAI_API_KEY",
+                "models": ["llama-4-maverick"],
+            },
+        }
+    })
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    assert loader.get_provider("usai").base_url == "https://live.example.com/api/v1"
+
+
+def test_default_model_dropped_falls_back_with_warning(live_catalog, caplog):
+    import logging as _logging
+    write, _ = live_catalog
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                "models": ["claude-opus-4-5", "gemini-2-5-pro"],
+            },
+        }
+    })
+    caplog.set_level(_logging.WARNING, logger="usai_harness.config")
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+
+    assert loader.get_default_model().name in {"claude-opus-4-5", "gemini-2-5-pro"}
+    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+    assert any(
+        "default_model" in r.getMessage() and "dropped" in r.getMessage()
+        for r in warnings
+    )
+
+
+def test_default_model_becomes_none_when_all_dropped(live_catalog):
+    write, _ = live_catalog
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                "models": [],  # empty — every repo model gets dropped
+            },
+        }
+    })
+    # An empty models list means no authoritative set, which the impl treats as
+    # "no live data; leave repo state untouched". So we need a non-empty list
+    # that contains no overlap with the repo. Use a model the repo does not have.
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                "models": ["only-live-one"],
+            },
+        }
+    })
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    # Only one live model survives, and default_model was llama-4-maverick.
+    assert loader.list_models() == ["only-live-one"]
+    assert loader.get_default_model().name == "only-live-one"

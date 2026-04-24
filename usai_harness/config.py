@@ -84,6 +84,22 @@ class ProjectConfig:
     credentials_kwargs: dict = field(default_factory=dict)
 
 
+def _load_user_catalog(path: Optional[Path] = None) -> dict:
+    """Load the user-level models.yaml if present. Lazy-imports the path helper
+    from setup_commands to avoid circular imports during module load.
+    """
+    if path is None:
+        from usai_harness.setup_commands import user_config_models_path
+        path = user_config_models_path()
+    if not path.exists():
+        return {}
+    try:
+        raw = yaml.safe_load(path.read_text()) or {}
+    except yaml.YAMLError:
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
 class ConfigLoader:
     """Loads and validates model and project configurations."""
 
@@ -172,6 +188,88 @@ class ConfigLoader:
                     f"'{model_cfg.provider}' which is not defined in the "
                     f"'providers' block. Known providers: {sorted(self._providers)}."
                 )
+
+        user_catalog = _load_user_catalog()
+        if user_catalog:
+            self._apply_live_catalog(user_catalog)
+
+    def _apply_live_catalog(self, user_catalog: dict) -> None:
+        """Merge the user-level live catalog into providers and models.
+
+        Rules per ADR-009 / FR-040:
+            1. User-level provider entries override repo-level base_url and api_key_env.
+            2. User-level 'models' list per provider is authoritative.
+            3. Repo-level model entries that match a live model ID contribute
+               presentation overrides.
+            4. Repo-level model entries not present in the live catalog are dropped.
+            5. Live model IDs not present in the repo are added with defaults.
+        """
+        live_providers = user_catalog.get("providers", {})
+        if not isinstance(live_providers, dict):
+            return
+
+        authoritative: set[tuple[str, str]] = set()
+
+        for prov_name, prov_spec in live_providers.items():
+            if not isinstance(prov_spec, dict):
+                continue
+            existing = self._providers.get(prov_name)
+            base_url = prov_spec.get("base_url") or (existing.base_url if existing else "")
+            api_key_env = prov_spec.get("api_key_env") or (
+                existing.api_key_env if existing else ""
+            )
+            self._providers[prov_name] = ProviderConfig(
+                name=prov_name,
+                base_url=str(base_url),
+                api_key_env=str(api_key_env),
+            )
+            for model_id in prov_spec.get("models", []) or []:
+                authoritative.add((prov_name, str(model_id)))
+
+        if not authoritative:
+            return
+
+        new_models: dict[str, ModelConfig] = {}
+        for prov_name, model_id in authoritative:
+            existing = self._models.get(model_id)
+            if existing is not None:
+                new_models[model_id] = ModelConfig(
+                    name=model_id,
+                    provider=prov_name,
+                    context_window=existing.context_window,
+                    max_output_tokens=existing.max_output_tokens,
+                    supports_temperature=existing.supports_temperature,
+                    temperature_range=existing.temperature_range,
+                    supports_system_prompt=existing.supports_system_prompt,
+                    cost_per_1k_input_tokens=existing.cost_per_1k_input_tokens,
+                    cost_per_1k_output_tokens=existing.cost_per_1k_output_tokens,
+                )
+            else:
+                new_models[model_id] = ModelConfig(
+                    name=model_id,
+                    provider=prov_name,
+                    context_window=0,
+                    max_output_tokens=4096,
+                    supports_temperature=True,
+                    temperature_range=(0.0, 2.0),
+                    supports_system_prompt=True,
+                    cost_per_1k_input_tokens=0.0,
+                    cost_per_1k_output_tokens=0.0,
+                )
+
+        self._models = new_models
+
+        if self._default_model_name and self._default_model_name not in self._models:
+            if self._models:
+                fallback = next(iter(self._models))
+                log.warning(
+                    "default_model '%s' was dropped by live catalog merge. "
+                    "Falling back to '%s'.",
+                    self._default_model_name, fallback,
+                )
+                self._default_model_name = fallback
+            else:
+                self._default_model_name = None
 
     def list_models(self) -> list[str]:
         """Return list of available model names."""

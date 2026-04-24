@@ -1,12 +1,10 @@
-"""Tests for post-run reporting and CLI."""
+"""Tests for post-run reporting logic. CLI dispatcher is tested in test_cli.py."""
 
 import json
-import sys
 
 import pytest
 
 from usai_harness.report import (
-    cli_main,
     cost_report,
     format_report,
     generate_report,
@@ -184,28 +182,3 @@ def test_cost_report_empty_ledger(tmp_path):
     assert "no" in out.lower() and ("data" in out.lower() or "entries" in out.lower())
 
 
-def test_cli_report_command(tmp_path, monkeypatch, capsys):
-    path = tmp_path / "run.jsonl"
-    _write_log(path, [_entry(task_id=f"t{i}") for i in range(5)])
-
-    monkeypatch.setattr(sys, "argv", ["usai-harness", "report", str(path)])
-    cli_main()
-    out = capsys.readouterr().out
-    assert "Job:" in out or "Calls:" in out
-
-
-def test_cli_cost_report_command(tmp_path, monkeypatch, capsys):
-    ledger = tmp_path / "ledger.jsonl"
-    _write_ledger(ledger, [_ledger_entry()])
-
-    monkeypatch.setattr(sys, "argv",
-                        ["usai-harness", "cost-report", "--ledger", str(ledger)])
-    cli_main()
-    assert capsys.readouterr().out.strip()
-
-
-def test_cli_no_command(monkeypatch, capsys):
-    monkeypatch.setattr(sys, "argv", ["usai-harness"])
-    with pytest.raises(SystemExit) as exc:
-        cli_main()
-    assert exc.value.code == 1

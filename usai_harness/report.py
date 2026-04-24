@@ -19,7 +19,6 @@ Outputs:
     - cli_main() — entry point for `usai-harness cost-report`
 """
 
-import argparse
 import json
 import statistics
 import sys
@@ -286,31 +285,3 @@ def cost_report(ledger_path, project: Optional[str] = None,
 
     lines.append("")
     return "\n".join(lines)
-
-
-def cli_main() -> None:
-    """Entry point for the `usai-harness` console script."""
-    parser = argparse.ArgumentParser(
-        prog="usai-harness",
-        description="USAi Harness utilities",
-    )
-    subparsers = parser.add_subparsers(dest="command")
-
-    rp = subparsers.add_parser("report", help="Generate run report from log file")
-    rp.add_argument("log_file", help="Path to run log file (.jsonl)")
-
-    cp = subparsers.add_parser("cost-report", help="Summarize cost ledger")
-    cp.add_argument("--ledger", default="cost_ledger.jsonl",
-                    help="Path to cost ledger")
-    cp.add_argument("--project", default=None, help="Filter by project")
-    cp.add_argument("--model", default=None, help="Filter by model")
-
-    args = parser.parse_args()
-
-    if args.command == "report":
-        print(format_report(generate_report(args.log_file)))
-    elif args.command == "cost-report":
-        print(cost_report(args.ledger, project=args.project, model=args.model))
-    else:
-        parser.print_help()
-        sys.exit(1)

@@ -14,6 +14,7 @@ build/
 
 # Environment and secrets
 .env
+.usai_key_meta.json
 
 # Cost and logs
 cost_ledger.jsonl
