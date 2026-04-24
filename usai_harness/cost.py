@@ -20,10 +20,34 @@ Outputs:
 
 import json
 import logging
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger("usai_harness.cost")
+
+
+@dataclass(frozen=True)
+class LedgerEntry:
+    """Append-only ledger entry. Metadata only, no content fields permitted.
+
+    Per ADR-004 / FR-031: this dataclass has no content, prompt, or response
+    fields and must not grow any. The absence of content fields is a structural
+    guarantee, not a convention.
+    """
+    timestamp: str
+    job_id: str
+    job_name: str
+    project: str
+    model: str
+    total_calls: int
+    successful_calls: int
+    failed_calls: int
+    success_rate: float
+    total_tokens_in: int
+    total_tokens_out: int
+    estimated_cost: float
+    duration_seconds: float
 
 
 class CostTracker:
@@ -86,25 +110,25 @@ class CostTracker:
             totals["successful_calls"] / totals["total_calls"]
             if totals["total_calls"] > 0 else 0.0
         )
-        entry = {
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-            "job_id": job_id,
-            "job_name": job_name,
-            "project": project,
-            "model": model,
-            "total_calls": totals["total_calls"],
-            "successful_calls": totals["successful_calls"],
-            "failed_calls": totals["failed_calls"],
-            "success_rate": success_rate,
-            "total_tokens_in": totals["total_input_tokens"],
-            "total_tokens_out": totals["total_output_tokens"],
-            "estimated_cost": totals["estimated_cost_total"],
-            "duration_seconds": duration_seconds,
-        }
+        entry = LedgerEntry(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            job_id=job_id,
+            job_name=job_name,
+            project=project,
+            model=model,
+            total_calls=totals["total_calls"],
+            successful_calls=totals["successful_calls"],
+            failed_calls=totals["failed_calls"],
+            success_rate=success_rate,
+            total_tokens_in=totals["total_input_tokens"],
+            total_tokens_out=totals["total_output_tokens"],
+            estimated_cost=totals["estimated_cost_total"],
+            duration_seconds=duration_seconds,
+        )
 
         self.ledger_path.parent.mkdir(parents=True, exist_ok=True)
         with open(self.ledger_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
+            f.write(json.dumps(asdict(entry)) + "\n")
             f.flush()
 
     @classmethod

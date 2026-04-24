@@ -10,10 +10,13 @@ above this layer (client, worker pool, rate limiter, etc.) is transport-agnostic
 """
 
 import logging
+import sys
 from abc import ABC, abstractmethod
 from typing import Optional
 
 import httpx
+
+from usai_harness.redaction import redact_secrets
 
 
 class BaseTransport(ABC):
@@ -45,8 +48,15 @@ class HttpxTransport(BaseTransport):
 
     def __init__(self, timeout: float = 120.0, **client_kwargs):
         client_kwargs.setdefault("timeout", timeout)
+        self._verify_disabled = client_kwargs.get("verify", True) is False
         self._client = httpx.AsyncClient(**client_kwargs)
         self._log = logging.getLogger("usai_harness.transport.httpx")
+        if self._verify_disabled:
+            self._log.warning(
+                "TLS verification is DISABLED for this transport. Every "
+                "call will emit a warning. Re-enable verify=True for "
+                "production use."
+            )
 
     async def send(
         self,
@@ -77,10 +87,17 @@ class HttpxTransport(BaseTransport):
             "Content-Type": "application/json",
         }
 
+        if self._verify_disabled:
+            print(
+                f"WARNING: TLS verification disabled. Call to {url} is not "
+                f"TLS-verified. (SEC-003)",
+                file=sys.stderr,
+            )
+
         response = await self._client.post(url, json=payload, headers=headers)
         if 200 <= response.status_code < 300:
             return response.json(), response.status_code
-        return {"error": response.text}, response.status_code
+        return {"error": redact_secrets(response.text)}, response.status_code
 
     async def close(self) -> None:
         await self._client.aclose()

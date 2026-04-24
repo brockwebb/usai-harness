@@ -58,9 +58,26 @@ def generate_report(log_path) -> dict:
         print(f"Warning: no entries found in {log_path}", file=sys.stderr)
         return {}
 
+    # Backward-compat: old logs had "model"; new logs have "model_requested".
+    for e in entries:
+        if "model_requested" not in e and "model" in e:
+            e["model_requested"] = e["model"]
+
     first = entries[0]
-    models = {e.get("model") for e in entries if e.get("model")}
+    models = {e.get("model_requested") for e in entries if e.get("model_requested")}
     model_label = next(iter(models)) if len(models) == 1 else "mixed"
+
+    mismatches = [
+        {
+            "task_id": e.get("task_id"),
+            "requested": e.get("model_requested"),
+            "returned": e.get("model_returned"),
+        }
+        for e in entries
+        if e.get("model_requested")
+        and e.get("model_returned")
+        and e["model_requested"] != e["model_returned"]
+    ]
 
     successful = [e for e in entries if 200 <= int(e.get("status_code", 0)) < 300]
     failed = [e for e in entries if not (200 <= int(e.get("status_code", 0)) < 300)]
@@ -137,6 +154,7 @@ def generate_report(log_path) -> dict:
             "count": len(failed),
             "types": dict(error_codes),
         },
+        "model_mismatches": mismatches,
         "insights": insights,
     }
 
@@ -188,6 +206,16 @@ def format_report(report: dict) -> str:
     lines.append(f"Errors:      {errs['count']} total")
     for status, count in sorted(errs["types"].items()):
         lines.append(f"  {status}:       {count}")
+
+    mismatches = report.get("model_mismatches") or []
+    if mismatches:
+        lines.append("")
+        lines.append(f"Model echo:  {len(mismatches)} mismatch(es) detected")
+        for m in mismatches:
+            lines.append(
+                f"  {m['task_id']}: requested {m['requested']}, "
+                f"returned {m['returned']}"
+            )
 
     if report["insights"]:
         lines.append("")

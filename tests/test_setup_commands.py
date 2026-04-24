@@ -452,3 +452,26 @@ def test_ping_failure_returns_1(monkeypatch, capsys):
     err = capsys.readouterr().err
     assert rc == 1
     assert "ping failed" in err
+
+
+def test_no_input_used_for_keys():
+    """Structural regression guard: no setup path reads a key via input() (FR-041)."""
+    import ast
+    import pathlib
+
+    source = pathlib.Path("usai_harness/setup_commands.py").read_text()
+    tree = ast.parse(source)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = None
+            if isinstance(node.func, ast.Name):
+                name = node.func.id
+            elif isinstance(node.func, ast.Attribute):
+                name = node.func.attr
+            if name == "input" and node.args and isinstance(node.args[0], ast.Constant):
+                prompt = str(node.args[0].value).lower()
+                assert "key" not in prompt and "password" not in prompt, (
+                    f"input() used with key-shaped prompt: {prompt!r}. "
+                    f"Use getpass.getpass() for credentials (FR-041)."
+                )

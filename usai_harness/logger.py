@@ -24,9 +24,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from usai_harness.redaction import redact_secrets
+
 log = logging.getLogger("usai_harness.logger")
 
-REQUIRED_FIELDS: tuple[str, ...] = ("timestamp", "task_id", "model", "status_code")
+REQUIRED_FIELDS: tuple[str, ...] = (
+    "timestamp", "task_id", "model_requested", "status_code",
+)
 
 
 class CallLogger:
@@ -61,6 +65,7 @@ class CallLogger:
             if v is not None:
                 entry[k] = v
 
+        entry = redact_secrets(entry)
         self._file.write(json.dumps(entry) + "\n")
         self._file.flush()
         self._count += 1

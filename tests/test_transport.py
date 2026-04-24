@@ -201,3 +201,70 @@ async def test_get_transport_litellm_not_implemented():
 async def test_get_transport_unknown_raises():
     with pytest.raises(ValueError, match="Unknown transport backend"):
         get_transport("magic")
+
+
+async def test_tls_verify_disabled_warns_per_call(capsys):
+    def handler(request):
+        return httpx.Response(200, json={
+            "choices": [], "usage": {
+                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            }, "model": "m",
+        })
+
+    t = HttpxTransport(transport=_mock_httpx(handler), verify=False)
+    try:
+        await t.send(
+            base_url="https://example.com/v1", api_key="K",
+            model="m", messages=[{"role": "user", "content": "hi"}],
+        )
+        await t.send(
+            base_url="https://example.com/v1", api_key="K",
+            model="m", messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+
+    err = capsys.readouterr().err
+    # The warning must appear for both calls (ADR-007 intentionally noisy).
+    assert err.count("TLS verification disabled") == 2
+
+
+async def test_tls_verify_default_silent(capsys):
+    def handler(request):
+        return httpx.Response(200, json={
+            "choices": [], "usage": {
+                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            }, "model": "m",
+        })
+
+    t = HttpxTransport(transport=_mock_httpx(handler))
+    try:
+        await t.send(
+            base_url="https://example.com/v1", api_key="K",
+            model="m", messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+
+    err = capsys.readouterr().err
+    assert "TLS verification disabled" not in err
+
+
+async def test_error_body_is_redacted():
+    def handler(request):
+        return httpx.Response(
+            401, text="Authorization: Bearer abc123def456ghi789 invalid",
+        )
+
+    t = HttpxTransport(transport=_mock_httpx(handler))
+    try:
+        body, status = await t.send(
+            base_url="https://example.com/v1", api_key="K",
+            model="m", messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+
+    assert status == 401
+    assert "abc123def456ghi789" not in body["error"]
+    assert "REDACTED" in body["error"]

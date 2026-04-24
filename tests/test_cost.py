@@ -127,3 +127,18 @@ def test_success_rate_zero_calls(tmp_path):
 
     entries = CostTracker.read_ledger(ledger_path=ledger)
     assert entries[0]["success_rate"] == 0.0
+
+
+def test_ledger_entry_has_no_content_fields():
+    """Structural guarantee: LedgerEntry has no prompt/response/content fields (FR-031)."""
+    from dataclasses import fields
+    from usai_harness.cost import LedgerEntry
+
+    forbidden = {"prompt", "response", "content", "messages",
+                 "completion", "text"}
+    actual = {f.name for f in fields(LedgerEntry)}
+    overlap = actual & forbidden
+    assert not overlap, (
+        f"LedgerEntry has forbidden content field(s): {overlap}. "
+        f"Per FR-031, the ledger is metadata-only."
+    )

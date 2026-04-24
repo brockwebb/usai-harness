@@ -233,3 +233,102 @@ async def test_client_init_raises_on_unconfigured_provider(tmp_path):
             log_dir=tmp_path / "logs",
             ledger_path=tmp_path / "ledger.jsonl",
         )
+
+
+async def test_model_echo_matching(tmp_path, env_path):
+    """Response model matches requested: both fields logged with same value."""
+    client = _client(tmp_path, env_path)
+    try:
+        await client.complete(messages=[{"role": "user", "content": "hi"}])
+        log_path = client._logger.get_log_path()
+    finally:
+        await client.close()
+
+    entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+    assert len(entries) == 1
+    assert entries[0]["model_requested"] == "llama-4-maverick"
+    assert entries[0]["model_returned"] == "llama-4-maverick"
+
+
+async def test_model_echo_mismatch_logged(tmp_path, env_path):
+    """Transport returns a different model id: both fields are logged distinctly."""
+    response_body = {
+        "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+        "model": "some-other-model",
+    }
+    mock = MockTransport(responses=[(response_body, 200)])
+    client = _client(tmp_path, env_path, transport=mock)
+    try:
+        await client.complete(messages=[{"role": "user", "content": "hi"}])
+        log_path = client._logger.get_log_path()
+    finally:
+        await client.close()
+
+    entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+    assert entries[0]["model_requested"] == "llama-4-maverick"
+    assert entries[0]["model_returned"] == "some-other-model"
+
+
+async def test_content_logging_off_by_default(tmp_path, env_path, capsys):
+    client = _client(tmp_path, env_path)
+    try:
+        tasks = [{"messages": [{"role": "user", "content": "secret"}]}]
+        await client.batch(tasks, job_name="b1")
+        log_path = client._logger.get_log_path()
+    finally:
+        await client.close()
+    capsys.readouterr()
+
+    entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+    assert all("prompt" not in e for e in entries)
+    assert all("response" not in e for e in entries)
+
+
+async def test_content_logging_opt_in_writes_content(tmp_path, env_path, capsys):
+    client = _client(tmp_path, env_path)
+    try:
+        tasks = [{"messages": [{"role": "user", "content": "hello world"}]}]
+        await client.batch(tasks, job_name="b2", log_content=True)
+        log_path = client._logger.get_log_path()
+    finally:
+        await client.close()
+    capsys.readouterr()
+
+    entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+    assert entries[0]["prompt"] == [{"role": "user", "content": "hello world"}]
+    assert "response" in entries[0]
+
+
+async def test_content_logging_warning_on_stderr(tmp_path, env_path, capsys):
+    client = _client(tmp_path, env_path)
+    try:
+        tasks = [
+            {"messages": [{"role": "user", "content": f"q{i}"}]}
+            for i in range(3)
+        ]
+        await client.batch(tasks, job_name="b3", log_content=True)
+    finally:
+        await client.close()
+    captured = capsys.readouterr()
+    # Warning appears exactly once per batch call.
+    assert captured.err.count("content logging is ENABLED") == 1
+
+
+async def test_complete_exception_is_redacted(tmp_path, env_path):
+    """A raised exception containing a Bearer token is redacted before logging."""
+    class LeakyTransport(MockTransport):
+        async def send(self, **kw):
+            raise RuntimeError("Authorization: Bearer abc123def456ghi789 failed")
+
+    client = _client(tmp_path, env_path, transport=LeakyTransport())
+    try:
+        with pytest.raises(RuntimeError):
+            await client.complete(messages=[{"role": "user", "content": "hi"}])
+        log_path = client._logger.get_log_path()
+    finally:
+        await client.close()
+
+    entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
+    assert "abc123def456ghi789" not in entries[0]["error"]
+    assert "REDACTED" in entries[0]["error"]

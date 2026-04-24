@@ -23,6 +23,7 @@ Outputs:
 
 import asyncio
 import logging
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +34,7 @@ from usai_harness.cost import CostTracker
 from usai_harness.key_manager import CredentialProvider, make_credential_provider
 from usai_harness.logger import CallLogger
 from usai_harness.rate_limiter import RateLimiter
+from usai_harness.redaction import redact_secrets
 from usai_harness.report import format_report, generate_report
 from usai_harness.transport import BaseTransport, get_transport
 from usai_harness.worker_pool import Task, TaskResult, WorkerPool
@@ -135,6 +137,7 @@ class USAiClient:
         max_tokens: Optional[int] = None,
         system_prompt: Optional[str] = None,
         task_id: Optional[str] = None,
+        log_content: bool = False,
         **kwargs,
     ) -> dict:
         """Make one completion call with rate limiting, logging, and cost tracking.
@@ -171,11 +174,12 @@ class USAiClient:
                 )
             except Exception as e:
                 latency_ms = (time.monotonic() - start) * 1000.0
-                log.error("complete() transport error on task %s: %s", task_id, e)
+                redacted = redact_secrets(str(e))
+                log.error("complete() transport error on task %s: %s", task_id, redacted)
                 self._record_outcome(
                     task_id=task_id, model=model_name, status_code=0,
-                    latency_ms=latency_ms, response=None, error=str(e),
-                    success=False,
+                    latency_ms=latency_ms, response=None, error=redacted,
+                    success=False, messages=messages, log_content=log_content,
                 )
                 raise
 
@@ -186,7 +190,7 @@ class USAiClient:
                 self._record_outcome(
                     task_id=task_id, model=model_name, status_code=status,
                     latency_ms=latency_ms, response=body, error=None,
-                    success=True,
+                    success=True, messages=messages, log_content=log_content,
                 )
                 return body
 
@@ -203,7 +207,7 @@ class USAiClient:
             task_id=task_id, model=model_name, status_code=status,
             latency_ms=latency_ms, response=body,
             error=f"HTTP {status}",
-            success=False,
+            success=False, messages=messages, log_content=log_content,
         )
         return body
 
@@ -213,15 +217,27 @@ class USAiClient:
         self,
         tasks: list[dict],
         job_name: Optional[str] = None,
+        log_content: bool = False,
     ) -> list[TaskResult]:
         """Process a list of task dicts through the worker pool.
 
         Each task dict must contain `messages`. Optional: `model`, `temperature`,
         `max_tokens`, `system_prompt`, `task_id`, `metadata`, plus any provider
         kwargs to forward.
+
+        If log_content=True, full prompts and responses are written to the call
+        log (subject to secret redaction). A one-time stderr warning is emitted.
         """
         if not tasks:
             return []
+
+        if log_content:
+            print(
+                "WARNING: content logging is ENABLED. Prompts and responses "
+                "will be written to the call log. This may contain PII. "
+                "(FR-028, ADR-007)",
+                file=sys.stderr,
+            )
 
         job_name = job_name or self.project
         task_objs = self._build_tasks(tasks, job_name)
@@ -237,7 +253,7 @@ class USAiClient:
         duration = time.monotonic() - start
 
         for r in results:
-            self._record_result(r)
+            self._record_result(r, log_content=log_content)
 
         self._cost_tracker.write_summary(
             job_id=self._logger.job_id,
@@ -310,17 +326,22 @@ class USAiClient:
         response: Optional[dict],
         error: Optional[str],
         success: bool,
+        messages: Optional[list[dict]] = None,
+        log_content: bool = False,
     ) -> None:
         usage = {}
+        model_returned = None
         if isinstance(response, dict):
             u = response.get("usage")
             if isinstance(u, dict):
                 usage = u
+            model_returned = response.get("model")
 
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "task_id": task_id,
-            "model": model,
+            "model_requested": model,
+            "model_returned": model_returned,
             "status_code": status_code,
             "latency_ms": latency_ms,
             "prompt_tokens": usage.get("prompt_tokens"),
@@ -329,18 +350,27 @@ class USAiClient:
             "error": error,
             "success": success,
         }
+        if log_content:
+            entry["prompt"] = messages
+            entry["response"] = response
         self._logger.log_call(entry)
         self._cost_tracker.record_call(response or {}, success=success)
 
-    def _record_result(self, result: TaskResult) -> None:
+    def _record_result(
+        self,
+        result: TaskResult,
+        log_content: bool = False,
+    ) -> None:
         model = result.payload.get("model", self.config.model.name)
         response = result.response if isinstance(result.response, dict) else {}
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
+        model_returned = response.get("model") if isinstance(response, dict) else None
 
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "task_id": result.task_id,
-            "model": model,
+            "model_requested": model,
+            "model_returned": model_returned,
             "status_code": result.status_code if result.status_code is not None else 0,
             "latency_ms": result.latency_ms,
             "prompt_tokens": usage.get("prompt_tokens"),
@@ -349,6 +379,9 @@ class USAiClient:
             "error": result.error,
             "success": result.success,
         }
+        if log_content:
+            entry["prompt"] = result.payload.get("messages")
+            entry["response"] = result.response
         self._logger.log_call(entry)
         self._cost_tracker.record_call(response, success=result.success)
 

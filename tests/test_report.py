@@ -182,3 +182,51 @@ def test_cost_report_empty_ledger(tmp_path):
     assert "no" in out.lower() and ("data" in out.lower() or "entries" in out.lower())
 
 
+# ---------- model echo (FR-029) -------------------------------------------
+
+
+def test_report_detects_mismatch(tmp_path):
+    path = tmp_path / "run.jsonl"
+    _write_log(path, [
+        _entry(task_id="t0", model_requested="llama-4-maverick",
+               model_returned="llama-4-maverick"),
+        _entry(task_id="t1", model_requested="llama-4-maverick",
+               model_returned="claude-opus-4-5"),
+        _entry(task_id="t2", model_requested="llama-4-maverick",
+               model_returned="gemini-2-5-pro"),
+    ])
+    rpt = generate_report(path)
+    assert len(rpt["model_mismatches"]) == 2
+    ids = {m["task_id"] for m in rpt["model_mismatches"]}
+    assert ids == {"t1", "t2"}
+
+    text = format_report(rpt)
+    assert "Model echo:" in text
+    assert "2 mismatch" in text
+
+
+def test_report_no_section_when_no_mismatches(tmp_path):
+    path = tmp_path / "run.jsonl"
+    _write_log(path, [
+        _entry(task_id="t0", model_requested="llama-4-maverick",
+               model_returned="llama-4-maverick"),
+    ])
+    rpt = generate_report(path)
+    assert rpt["model_mismatches"] == []
+    assert "Model echo" not in format_report(rpt)
+
+
+def test_report_old_log_format_still_works(tmp_path):
+    """Backward-compat: a log with only 'model' (no 'model_requested') still reports."""
+    path = tmp_path / "legacy.jsonl"
+    _write_log(path, [
+        # _entry() already uses 'model', not 'model_requested', so this is the old shape.
+        _entry(task_id=f"t{i}") for i in range(3)
+    ])
+    rpt = generate_report(path)
+    assert rpt["total_calls"] == 3
+    # No mismatches because model_returned is absent in old logs.
+    assert rpt["model_mismatches"] == []
+    assert rpt["model"] == "llama-4-maverick"
+
+
