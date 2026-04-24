@@ -11,7 +11,7 @@ def _base_call(**overrides):
     data = {
         "timestamp": "2026-04-22T12:00:00+00:00",
         "task_id": "t1",
-        "model_requested": "llama-4-maverick",
+        "model_requested": "claude-sonnet-4-5-20241022",
         "status_code": 200,
     }
     data.update(overrides)
@@ -35,7 +35,7 @@ def test_log_call_writes_entry(tmp_path):
     assert len(lines) == 1
     entry = json.loads(lines[0])
     assert entry["task_id"] == "t1"
-    assert entry["model_requested"] == "llama-4-maverick"
+    assert entry["model_requested"] == "claude-sonnet-4-5-20241022"
     assert entry["status_code"] == 200
     assert entry["prompt_tokens"] == 10
     assert entry["completion_tokens"] == 20

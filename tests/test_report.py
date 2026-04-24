@@ -17,7 +17,7 @@ def _entry(**overrides):
         "job_id": "J1",
         "project": "testproj",
         "task_id": "t1",
-        "model": "llama-4-maverick",
+        "model": "claude-sonnet-4-5-20241022",
         "status_code": 200,
         "prompt_tokens": 100,
         "completion_tokens": 50,
@@ -39,7 +39,7 @@ def _ledger_entry(**overrides):
         "job_id": "J1",
         "job_name": "run",
         "project": "p",
-        "model": "llama-4-maverick",
+        "model": "claude-sonnet-4-5-20241022",
         "total_calls": 10,
         "successful_calls": 10,
         "failed_calls": 0,
@@ -188,11 +188,11 @@ def test_cost_report_empty_ledger(tmp_path):
 def test_report_detects_mismatch(tmp_path):
     path = tmp_path / "run.jsonl"
     _write_log(path, [
-        _entry(task_id="t0", model_requested="llama-4-maverick",
-               model_returned="llama-4-maverick"),
-        _entry(task_id="t1", model_requested="llama-4-maverick",
+        _entry(task_id="t0", model_requested="claude-sonnet-4-5-20241022",
+               model_returned="claude-sonnet-4-5-20241022"),
+        _entry(task_id="t1", model_requested="claude-sonnet-4-5-20241022",
                model_returned="claude-opus-4-5"),
-        _entry(task_id="t2", model_requested="llama-4-maverick",
+        _entry(task_id="t2", model_requested="claude-sonnet-4-5-20241022",
                model_returned="gemini-2-5-pro"),
     ])
     rpt = generate_report(path)
@@ -208,8 +208,8 @@ def test_report_detects_mismatch(tmp_path):
 def test_report_no_section_when_no_mismatches(tmp_path):
     path = tmp_path / "run.jsonl"
     _write_log(path, [
-        _entry(task_id="t0", model_requested="llama-4-maverick",
-               model_returned="llama-4-maverick"),
+        _entry(task_id="t0", model_requested="claude-sonnet-4-5-20241022",
+               model_returned="claude-sonnet-4-5-20241022"),
     ])
     rpt = generate_report(path)
     assert rpt["model_mismatches"] == []
@@ -227,6 +227,6 @@ def test_report_old_log_format_still_works(tmp_path):
     assert rpt["total_calls"] == 3
     # No mismatches because model_returned is absent in old logs.
     assert rpt["model_mismatches"] == []
-    assert rpt["model"] == "llama-4-maverick"
+    assert rpt["model"] == "claude-sonnet-4-5-20241022"
 
 

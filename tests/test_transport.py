@@ -250,6 +250,44 @@ async def test_tls_verify_default_silent(capsys):
     assert "TLS verification disabled" not in err
 
 
+async def test_url_composition_preserves_path_prefix():
+    """Transport must compose base_url + '/chat/completions' without stripping the prefix."""
+    captured = {}
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        return httpx.Response(200, json={
+            "choices": [], "usage": {
+                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+            }, "model": "m",
+        })
+
+    # No trailing slash
+    t = HttpxTransport(transport=_mock_httpx(handler))
+    try:
+        await t.send(
+            base_url="https://example.com/api/v1",
+            api_key="K", model="m",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+    assert captured["url"] == "https://example.com/api/v1/chat/completions"
+
+    # With trailing slash: still single slash
+    captured.clear()
+    t = HttpxTransport(transport=_mock_httpx(handler))
+    try:
+        await t.send(
+            base_url="https://example.com/api/v1/",
+            api_key="K", model="m",
+            messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+    assert captured["url"] == "https://example.com/api/v1/chat/completions"
+
+
 async def test_error_body_is_redacted():
     def handler(request):
         return httpx.Response(

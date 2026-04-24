@@ -5,11 +5,19 @@ NOT part of the regular pytest suite. Run manually:
     python tests/integration/test_live_usai.py
 
 Requires:
-    - Valid USAI_API_KEY and USAI_BASE_URL in .env at the repo root
+    - A user-level or project-local .env with USAI_API_KEY
+      (per ADR-008; run `usai-harness init` to set up)
     - Network access to the USAi endpoint
 
-This runs real API calls (~10-13 total) against the live endpoint. Do not run
+This runs real API calls (~15 total) against the live endpoint. Do not run
 in CI. Do not run unattended. Watch the output.
+
+Covers:
+    - end-to-end single and batch completion
+    - log and ledger schema (Task 4 renamed `model` → `model_requested`)
+    - rate-limiter observed throughput
+    - bad-model graceful handling
+    - AuthHaltError on rotated/invalid key (TEVV §4.2, FR-011, FR-022)
 """
 
 import asyncio
@@ -48,7 +56,7 @@ async def _test_init(results: dict) -> USAiClient:
         _record(results, name, False, detail=f"init failed: {e}")
         raise
 
-    domain = urlparse(client._key_manager.base_url).netloc or "(unknown)"
+    domain = urlparse(client._base_url).netloc or "(unknown)"
     detail = (
         f"model={client.config.model.name} base_url_domain={domain}"
     )
@@ -177,7 +185,7 @@ def _test_log_file(client: USAiClient, results: dict) -> Path:
             if line.strip()
         ]
         assert len(entries) >= 5, f"only {len(entries)} entries, expected >=5"
-        required = ("timestamp", "task_id", "model", "status_code")
+        required = ("timestamp", "task_id", "model_requested", "status_code")
         for i, e in enumerate(entries):
             for f in required:
                 assert f in e, f"entry[{i}] missing field {f}"
@@ -258,7 +266,7 @@ async def _test_bad_model(client: USAiClient, results: dict) -> None:
     try:
         response = await client.complete(
             messages=[{"role": "user", "content": "hi"}],
-            model="nonexistent-model-xyz",
+            model="meta-llama/Nonexistent-Model-Instruct",
         )
         is_error_body = (
             isinstance(response, dict)
@@ -278,6 +286,79 @@ async def _test_bad_model(client: USAiClient, results: dict) -> None:
     except Exception as e:
         _record(results, name, False, detail=f"unhandled {type(e).__name__}: {e}")
         print(f"  [bad_model] FAIL unhandled exception: {e}")
+
+
+async def _test_auth_halt(results: dict) -> None:
+    """Submit a batch with a deliberately-invalid key; expect AuthHaltError.
+
+    The endpoint-side rejection is either 401 or 403 (PASS). Some gateways return
+    429 to burn bad keys aggressively; that's reported as WARN rather than FAIL.
+    """
+    name = "11. auth_halt_on_rotated_key"
+    try:
+        import tempfile
+
+        from usai_harness.worker_pool import AuthHaltError
+
+        with tempfile.TemporaryDirectory() as tmp:
+            bad_env = Path(tmp) / ".env"
+            bad_env.write_text("USAI_API_KEY=invalid-test-key-xyz1234567890\n")
+
+            real_client = USAiClient(project="integration-test")
+            real_base_url = real_client._base_url
+            await real_client.close()
+
+            client = USAiClient(
+                project="integration-test-auth",
+                env_path=bad_env,
+                log_dir=LOG_DIR,
+                ledger_path=LEDGER_PATH,
+            )
+            client._base_url = real_base_url
+
+            tasks = [
+                {
+                    "messages": [{"role": "user", "content": f"ping {i}"}],
+                    "task_id": f"auth_halt_{i:02d}",
+                }
+                for i in range(5)
+            ]
+            halted = False
+            status_code = None
+            try:
+                t0 = time.monotonic()
+                await client.batch(tasks, job_name="auth-halt-probe")
+            except AuthHaltError as e:
+                halted = True
+                elapsed = time.monotonic() - t0
+                status_code = e.status_code
+                if status_code in (401, 403):
+                    _record(
+                        results, name, True,
+                        detail=f"halted in {elapsed:.2f}s on {status_code}",
+                    )
+                    print(f"  [auth_halt] halted in {elapsed:.2f}s on {status_code}")
+                else:
+                    _record(
+                        results, name, True, warn=True,
+                        detail=f"halted on {status_code} (expected 401/403)",
+                    )
+                    print(
+                        f"  [auth_halt] WARN halted on {status_code} "
+                        "(expected 401/403; gateway may be aggressive)"
+                    )
+            finally:
+                await client.close()
+
+            if not halted:
+                _record(
+                    results, name, False,
+                    detail="batch completed without AuthHaltError",
+                )
+                print("  [auth_halt] FAIL: no halt occurred")
+    except Exception as e:
+        _record(results, name, False, detail=f"{type(e).__name__}: {e}")
+        print(f"  [auth_halt] FAIL: {e}")
 
 
 def print_summary(results: dict) -> None:
@@ -321,6 +402,8 @@ async def main() -> int:
             results,
         )
         await _test_bad_model(client, results)
+        # _test_auth_halt constructs its own throwaway client with a bad key.
+        await _test_auth_halt(results)
     finally:
         if client is not None:
             await client.close()

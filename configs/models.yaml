@@ -1,24 +1,36 @@
-# Known USAi models and their constraints
-# Update as models are added/removed from USAi
+# USAi model presentation overrides.
+# Per ADR-009, the live /api/v1/models response is authoritative for which
+# models exist. This file provides display names, temperature ranges, and
+# cost rates for known IDs. Entries matching the live catalog are merged;
+# IDs not present in the live catalog are ignored.
 
 providers:
   usai:
-    # Placeholder; Task 5 verifies the real path (/api/v1 vs /v1).
-    base_url: https://usai.example.gov/api/v1
+    base_url: https://your-agency-endpoint.usai.gov/api/v1
     api_key_env: USAI_API_KEY
 
 models:
-  llama-4-maverick:
+  "meta-llama/Llama-4-Maverick-17B-128E-Instruct":
     provider: usai
     context_window: 131072
     max_output_tokens: 32768
     supports_temperature: true
     temperature_range: [0.0, 2.0]
     supports_system_prompt: true
-    cost_per_1k_input_tokens: 0.0    # free credits; update when billing activates
+    cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
 
-  claude-opus-4-5:
+  "meta-llama/Llama-3.2-11B-Vision-Instruct":
+    provider: usai
+    context_window: 128000
+    max_output_tokens: 4096
+    supports_temperature: true
+    temperature_range: [0.0, 1.0]
+    supports_system_prompt: true
+    cost_per_1k_input_tokens: 0.0
+    cost_per_1k_output_tokens: 0.0
+
+  "claude-opus-4-5-20250521":
     provider: usai
     context_window: 200000
     max_output_tokens: 32000
@@ -28,7 +40,27 @@ models:
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
 
-  gemini-2-5-pro:
+  "claude-sonnet-4-5-20241022":
+    provider: usai
+    context_window: 200000
+    max_output_tokens: 8192
+    supports_temperature: true
+    temperature_range: [0.0, 1.0]
+    supports_system_prompt: true
+    cost_per_1k_input_tokens: 0.0
+    cost_per_1k_output_tokens: 0.0
+
+  "claude-3-5-haiku-20241022":
+    provider: usai
+    context_window: 200000
+    max_output_tokens: 8192
+    supports_temperature: true
+    temperature_range: [0.0, 1.0]
+    supports_system_prompt: true
+    cost_per_1k_input_tokens: 0.0
+    cost_per_1k_output_tokens: 0.0
+
+  "gemini-2.5-pro":
     provider: usai
     context_window: 1048576
     max_output_tokens: 65536
@@ -38,5 +70,14 @@ models:
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
 
-# Default model for new projects
-default_model: llama-4-maverick
+  "gemini-2.5-flash":
+    provider: usai
+    context_window: 1048576
+    max_output_tokens: 65536
+    supports_temperature: true
+    temperature_range: [0.0, 2.0]
+    supports_system_prompt: true
+    cost_per_1k_input_tokens: 0.0
+    cost_per_1k_output_tokens: 0.0
+
+default_model: "claude-sonnet-4-5-20241022"

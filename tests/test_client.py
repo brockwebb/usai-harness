@@ -51,7 +51,7 @@ def _default_response(prompt_tokens=10, completion_tokens=5):
             "completion_tokens": completion_tokens,
             "total_tokens": prompt_tokens + completion_tokens,
         },
-        "model": "llama-4-maverick",
+        "model": "claude-sonnet-4-5-20241022",
     }
 
 
@@ -93,7 +93,7 @@ async def test_client_init_success(tmp_path, env_path):
     client = _client(tmp_path, env_path)
     try:
         assert client.project == "test-proj"
-        assert client.config.model.name == "llama-4-maverick"
+        assert client.config.model.name == "claude-sonnet-4-5-20241022"
         assert (tmp_path / "logs").exists()
     finally:
         await client.close()
@@ -191,7 +191,7 @@ async def test_context_manager(tmp_path, env_path):
 async def test_client_uses_project_config(tmp_path, env_path):
     cfg = tmp_path / "project.yaml"
     cfg.write_text(textwrap.dedent("""
-        model: llama-4-maverick
+        model: claude-sonnet-4-5-20241022
         temperature: 0.5
         max_tokens: 1024
     """).lstrip())
@@ -203,7 +203,7 @@ async def test_client_uses_project_config(tmp_path, env_path):
     finally:
         await client.close()
 
-    assert mock.calls[0]["model"] == "llama-4-maverick"
+    assert mock.calls[0]["model"] == "claude-sonnet-4-5-20241022"
     assert mock.calls[0]["temperature"] == 0.5
     assert mock.calls[0]["max_tokens"] == 1024
 
@@ -211,7 +211,7 @@ async def test_client_uses_project_config(tmp_path, env_path):
 async def test_client_defaults_without_config(tmp_path, env_path):
     client = _client(tmp_path, env_path)
     try:
-        assert client.config.model.name == "llama-4-maverick"
+        assert client.config.model.name == "claude-sonnet-4-5-20241022"
         # base_url now comes from the providers block in models.yaml.
         assert client._base_url.startswith("https://")
         assert client._api_key == "test-key-AAAAAAAA"
@@ -246,8 +246,8 @@ async def test_model_echo_matching(tmp_path, env_path):
 
     entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
     assert len(entries) == 1
-    assert entries[0]["model_requested"] == "llama-4-maverick"
-    assert entries[0]["model_returned"] == "llama-4-maverick"
+    assert entries[0]["model_requested"] == "claude-sonnet-4-5-20241022"
+    assert entries[0]["model_returned"] == "claude-sonnet-4-5-20241022"
 
 
 async def test_model_echo_mismatch_logged(tmp_path, env_path):
@@ -266,7 +266,7 @@ async def test_model_echo_mismatch_logged(tmp_path, env_path):
         await client.close()
 
     entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
-    assert entries[0]["model_requested"] == "llama-4-maverick"
+    assert entries[0]["model_requested"] == "claude-sonnet-4-5-20241022"
     assert entries[0]["model_returned"] == "some-other-model"
 
 

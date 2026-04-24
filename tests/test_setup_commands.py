@@ -454,6 +454,31 @@ def test_ping_failure_returns_1(monkeypatch, capsys):
     assert "ping failed" in err
 
 
+def test_fetch_models_url_composition_preserves_path_prefix(monkeypatch):
+    """_fetch_models must compose base_url + '/models' without stripping the prefix."""
+    import httpx as _httpx
+
+    captured = {}
+    real_client_cls = _httpx.Client
+
+    def handler(request):
+        captured["url"] = str(request.url)
+        return _httpx.Response(200, json={"data": [{"id": "m1"}]})
+
+    def fake_client(**kwargs):
+        kwargs.pop("transport", None)
+        return real_client_cls(transport=_httpx.MockTransport(handler), **kwargs)
+
+    monkeypatch.setattr(setup_commands.httpx, "Client", fake_client)
+
+    setup_commands._fetch_models("https://example.com/api/v1", "K")
+    assert captured["url"] == "https://example.com/api/v1/models"
+
+    captured.clear()
+    setup_commands._fetch_models("https://example.com/api/v1/", "K")
+    assert captured["url"] == "https://example.com/api/v1/models"
+
+
 def test_no_input_used_for_keys():
     """Structural regression guard: no setup path reads a key via input() (FR-041)."""
     import ast
