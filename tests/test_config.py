@@ -504,6 +504,127 @@ def test_default_model_becomes_none_when_all_dropped(live_catalog):
     assert loader.get_default_model().name == "only-live-one"
 
 
+# ---------- api_key_secret for Azure backend (Task 07) ----------------------
+
+
+def test_provider_with_api_key_secret_loads(tmp_path):
+    yaml_body = """
+        providers:
+          usai:
+            base_url: https://example.com/api/v1
+            api_key_secret: usai-vault-secret-name
+        models:
+          test-model:
+            provider: usai
+            context_window: 1000
+            max_output_tokens: 100
+            supports_temperature: true
+            temperature_range: [0.0, 1.0]
+            supports_system_prompt: true
+            cost_per_1k_input_tokens: 0.0
+            cost_per_1k_output_tokens: 0.0
+        default_model: test-model
+    """
+    path = tmp_path / "models.yaml"
+    path.write_text(textwrap.dedent(yaml_body).lstrip())
+    loader = ConfigLoader(models_config_path=path)
+
+    p = loader.get_provider("usai")
+    assert p.api_key_secret == "usai-vault-secret-name"
+    assert p.api_key_env is None
+    assert loader.providers_to_secret_map() == {"usai": "usai-vault-secret-name"}
+
+
+def test_provider_with_neither_field_raises(tmp_path):
+    yaml_body = """
+        providers:
+          usai:
+            base_url: https://example.com/api/v1
+        models:
+          test-model:
+            provider: usai
+            context_window: 1000
+            max_output_tokens: 100
+            supports_temperature: true
+            temperature_range: [0.0, 1.0]
+            supports_system_prompt: true
+            cost_per_1k_input_tokens: 0.0
+            cost_per_1k_output_tokens: 0.0
+        default_model: test-model
+    """
+    path = tmp_path / "models.yaml"
+    path.write_text(textwrap.dedent(yaml_body).lstrip())
+    with pytest.raises(ConfigValidationError, match="api_key"):
+        ConfigLoader(models_config_path=path)
+
+
+def test_secret_map_falls_back_to_env_with_deprecation(tmp_path):
+    """api_key_env on Azure backend works once but warns."""
+    import warnings as _w
+    yaml_body = """
+        providers:
+          usai:
+            base_url: https://example.com/api/v1
+            api_key_env: USAI_API_KEY
+        models:
+          test-model:
+            provider: usai
+            context_window: 1000
+            max_output_tokens: 100
+            supports_temperature: true
+            temperature_range: [0.0, 1.0]
+            supports_system_prompt: true
+            cost_per_1k_input_tokens: 0.0
+            cost_per_1k_output_tokens: 0.0
+        default_model: test-model
+    """
+    path = tmp_path / "models.yaml"
+    path.write_text(textwrap.dedent(yaml_body).lstrip())
+    loader = ConfigLoader(models_config_path=path)
+
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter("always")
+        m = loader.providers_to_secret_map()
+    assert m == {"usai": "USAI_API_KEY"}
+    deprecation = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert deprecation, "expected DeprecationWarning"
+    assert "api_key_secret" in str(deprecation[0].message)
+
+
+def test_secret_map_prefers_secret_when_both_set(tmp_path):
+    """api_key_secret wins over api_key_env when both are present."""
+    import warnings as _w
+    yaml_body = """
+        providers:
+          usai:
+            base_url: https://example.com/api/v1
+            api_key_env: USAI_API_KEY
+            api_key_secret: usai-vault-secret
+        models:
+          test-model:
+            provider: usai
+            context_window: 1000
+            max_output_tokens: 100
+            supports_temperature: true
+            temperature_range: [0.0, 1.0]
+            supports_system_prompt: true
+            cost_per_1k_input_tokens: 0.0
+            cost_per_1k_output_tokens: 0.0
+        default_model: test-model
+    """
+    path = tmp_path / "models.yaml"
+    path.write_text(textwrap.dedent(yaml_body).lstrip())
+    loader = ConfigLoader(models_config_path=path)
+
+    with _w.catch_warnings(record=True) as caught:
+        _w.simplefilter("always")
+        m = loader.providers_to_secret_map()
+    assert m == {"usai": "usai-vault-secret"}
+    # No deprecation when secret is present.
+    deprecation = [w for w in caught if issubclass(w.category, DeprecationWarning)]
+    assert not deprecation
+
+
 def test_apply_live_catalog_warns_on_dropped_models(live_catalog, caplog):
     """A seed model absent from the live catalog must trigger a WARN with the path."""
     import logging as _logging

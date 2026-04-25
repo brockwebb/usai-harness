@@ -87,9 +87,13 @@ class USAiClient:
         if credentials is not None:
             self._credentials: CredentialProvider = credentials
         else:
+            if self.config.credentials_backend == "azure_keyvault":
+                providers_map = self._loader.providers_to_secret_map()
+            else:
+                providers_map = self._loader.providers_to_env_map()
             self._credentials = make_credential_provider(
                 backend=self.config.credentials_backend,
-                providers=self._loader.providers_to_env_map(),
+                providers=providers_map,
                 **self.config.credentials_kwargs,
             )
         # Resolve once at init to fail fast on missing credentials.

@@ -66,3 +66,11 @@ The configuration file at `configs/models.yaml` in the repository becomes seed c
 `usai-harness verify` becomes the command a researcher runs before starting a weekend batch job. Combined with the note in the README about checking key lifetime, it covers the Monday-morning-whomp-whomp case.
 
 The `audit` command from ADR-007 and the setup commands from this ADR together form the operational CLI. `init` gets you running. `verify` confirms readiness. `discover-models` refreshes the catalog. `audit` checks security hygiene. `ping` is the thirty-second smoke test.
+
+## Amendment, 2026-04-24 — Provider credential field split
+
+Implementation note (not a new architectural decision): the `providers:` block carries one credential reference per entry. For the `dotenv` and `env_var` backends, that reference is `api_key_env`, naming an environment variable. For the `azure_keyvault` backend, it is `api_key_secret`, naming a Key Vault secret. A provider entry may set both when it supports multiple backends.
+
+The original implementation overloaded `api_key_env` for both meanings; the field name lied for the Azure case. This was caught early and corrected. To preserve existing user catalogs, the Azure backend accepts `api_key_env` as a deprecated fallback in 0.1.x with a `DeprecationWarning` directing users to rename. The fallback is removed in 0.2.0.
+
+The architectural decision recorded above is unchanged. The endpoint remains authoritative for model identity; backends still differ only by where they fetch the credential from.

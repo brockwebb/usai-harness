@@ -65,10 +65,18 @@ class ModelConfig:
 
 @dataclass(frozen=True)
 class ProviderConfig:
-    """Endpoint-provider metadata loaded from the 'providers' block in models.yaml."""
+    """Endpoint-provider metadata loaded from the 'providers' block in models.yaml.
+
+    `api_key_env` names an OS environment variable for DotEnv/EnvVar backends.
+    `api_key_secret` names a Key Vault secret for the Azure backend. The two
+    fields are scoped per backend; a provider entry that supports multiple
+    backends can populate both. For the Azure backend, `api_key_env` is
+    accepted as a deprecated fallback and removed in 0.2.0.
+    """
     name: str
     base_url: str
-    api_key_env: str
+    api_key_env: Optional[str] = None
+    api_key_secret: Optional[str] = None
 
 
 @dataclass
@@ -176,17 +184,26 @@ class ConfigLoader:
                     f"Provider '{prov_name}' in {self.models_config_path} "
                     f"must be a mapping."
                 )
-            try:
-                self._providers[prov_name] = ProviderConfig(
-                    name=prov_name,
-                    base_url=str(prov_spec["base_url"]),
-                    api_key_env=str(prov_spec["api_key_env"]),
-                )
-            except KeyError as e:
+            if "base_url" not in prov_spec:
                 raise ConfigValidationError(
                     f"Provider '{prov_name}' in {self.models_config_path} is "
-                    f"missing required field: {e}."
-                ) from e
+                    f"missing required field: 'base_url'."
+                )
+            api_key_env = prov_spec.get("api_key_env")
+            api_key_secret = prov_spec.get("api_key_secret")
+            if api_key_env is None and api_key_secret is None:
+                raise ConfigValidationError(
+                    f"Provider '{prov_name}' in {self.models_config_path} "
+                    f"must specify either 'api_key_env' or 'api_key_secret'."
+                )
+            self._providers[prov_name] = ProviderConfig(
+                name=prov_name,
+                base_url=str(prov_spec["base_url"]),
+                api_key_env=str(api_key_env) if api_key_env is not None else None,
+                api_key_secret=(
+                    str(api_key_secret) if api_key_secret is not None else None
+                ),
+            )
 
         for model_name, model_cfg in self._models.items():
             if model_cfg.provider not in self._providers:
@@ -228,12 +245,18 @@ class ConfigLoader:
             existing = self._providers.get(prov_name)
             base_url = prov_spec.get("base_url") or (existing.base_url if existing else "")
             api_key_env = prov_spec.get("api_key_env") or (
-                existing.api_key_env if existing else ""
+                existing.api_key_env if existing else None
+            )
+            api_key_secret = prov_spec.get("api_key_secret") or (
+                existing.api_key_secret if existing else None
             )
             self._providers[prov_name] = ProviderConfig(
                 name=prov_name,
                 base_url=str(base_url),
-                api_key_env=str(api_key_env),
+                api_key_env=str(api_key_env) if api_key_env is not None else None,
+                api_key_secret=(
+                    str(api_key_secret) if api_key_secret is not None else None
+                ),
             )
             for model_id in prov_spec.get("models", []) or []:
                 authoritative.add((prov_name, str(model_id)))
@@ -319,8 +342,47 @@ class ConfigLoader:
         return self._providers[name]
 
     def providers_to_env_map(self) -> dict[str, str]:
-        """Return {provider_name: api_key_env} for handing to make_credential_provider."""
-        return {name: cfg.api_key_env for name, cfg in self._providers.items()}
+        """Return {provider_name: api_key_env} for env-based credential backends.
+
+        Skips providers that do not have api_key_env (Azure-only entries).
+        """
+        return {
+            name: cfg.api_key_env
+            for name, cfg in self._providers.items()
+            if cfg.api_key_env
+        }
+
+    def providers_to_secret_map(self) -> dict[str, str]:
+        """Return {provider_name: secret_name} for the Azure Key Vault backend.
+
+        Each provider must define `api_key_secret`. A provider that defines
+        only `api_key_env` is accepted with a `DeprecationWarning` (per Task 07
+        migration plan; the fallback is removed in 0.2.0). A provider with
+        neither raises ConfigValidationError.
+        """
+        import warnings as _warnings
+
+        out: dict[str, str] = {}
+        for name, cfg in self._providers.items():
+            if cfg.api_key_secret:
+                out[name] = cfg.api_key_secret
+                continue
+            if cfg.api_key_env:
+                _warnings.warn(
+                    f"Provider '{name}' uses 'api_key_env' for the Azure Key "
+                    "Vault backend; this is deprecated and will be removed in "
+                    "0.2.0. Rename to 'api_key_secret' (a Key Vault secret "
+                    "name, not an environment variable).",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
+                out[name] = cfg.api_key_env
+                continue
+            raise ConfigValidationError(
+                f"Provider '{name}' has neither 'api_key_secret' nor "
+                f"'api_key_env'. The Azure Key Vault backend needs a secret name."
+            )
+        return out
 
     def get_default_model(self) -> ModelConfig:
         """Return the ModelConfig for the yaml's default_model."""
