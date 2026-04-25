@@ -84,20 +84,27 @@ class ProjectConfig:
     credentials_kwargs: dict = field(default_factory=dict)
 
 
-def _load_user_catalog(path: Optional[Path] = None) -> dict:
-    """Load the user-level models.yaml if present. Lazy-imports the path helper
-    from setup_commands to avoid circular imports during module load.
+def _load_user_catalog(
+    path: Optional[Path] = None,
+) -> tuple[dict, Optional[Path]]:
+    """Load the user-level models.yaml if present.
+
+    Returns (catalog, resolved_path). resolved_path is the location consulted
+    even if it does not exist, so callers can include it in log messages.
+    Lazy-imports the path helper from setup_commands to avoid circular imports.
     """
     if path is None:
         from usai_harness.setup_commands import user_config_models_path
         path = user_config_models_path()
     if not path.exists():
-        return {}
+        return {}, path
     try:
         raw = yaml.safe_load(path.read_text()) or {}
     except yaml.YAMLError:
-        return {}
-    return raw if isinstance(raw, dict) else {}
+        return {}, path
+    if not isinstance(raw, dict):
+        return {}, path
+    return raw, path
 
 
 class ConfigLoader:
@@ -189,11 +196,15 @@ class ConfigLoader:
                     f"'providers' block. Known providers: {sorted(self._providers)}."
                 )
 
-        user_catalog = _load_user_catalog()
+        user_catalog, user_catalog_path = _load_user_catalog()
         if user_catalog:
-            self._apply_live_catalog(user_catalog)
+            self._apply_live_catalog(user_catalog, user_catalog_path)
 
-    def _apply_live_catalog(self, user_catalog: dict) -> None:
+    def _apply_live_catalog(
+        self,
+        user_catalog: dict,
+        catalog_path: Optional[Path] = None,
+    ) -> None:
         """Merge the user-level live catalog into providers and models.
 
         Rules per ADR-009 / FR-040:
@@ -208,6 +219,7 @@ class ConfigLoader:
         if not isinstance(live_providers, dict):
             return
 
+        seed_model_ids = set(self._models.keys())
         authoritative: set[tuple[str, str]] = set()
 
         for prov_name, prov_spec in live_providers.items():
@@ -258,6 +270,16 @@ class ConfigLoader:
                 )
 
         self._models = new_models
+
+        dropped = sorted(seed_model_ids - set(new_models.keys()))
+        if dropped:
+            log.warning(
+                "Models present in seed config but not in live catalog at %s "
+                "have been dropped: %s. This is expected if the endpoint no "
+                "longer advertises them; verify the live catalog is current "
+                "if unexpected.",
+                catalog_path, dropped,
+            )
 
         if self._default_model_name and self._default_model_name not in self._models:
             if self._models:

@@ -502,3 +502,33 @@ def test_default_model_becomes_none_when_all_dropped(live_catalog):
     # Only one live model survives, and default_model was llama-4-maverick.
     assert loader.list_models() == ["only-live-one"]
     assert loader.get_default_model().name == "only-live-one"
+
+
+def test_apply_live_catalog_warns_on_dropped_models(live_catalog, caplog):
+    """A seed model absent from the live catalog must trigger a WARN with the path."""
+    import logging as _logging
+    write, catalog_path = live_catalog
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                # Only Llama-4 is in live; the other 6 repo models are dropped.
+                "models": ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"],
+            },
+        }
+    })
+    caplog.set_level(_logging.WARNING, logger="usai_harness.config")
+    ConfigLoader(models_config_path=REAL_MODELS_YAML)
+
+    warnings = [
+        r for r in caplog.records
+        if r.levelno == _logging.WARNING
+        and "dropped" in r.getMessage()
+        and "live catalog" in r.getMessage()
+    ]
+    assert warnings, "expected WARN about dropped models"
+    msg = warnings[0].getMessage()
+    assert str(catalog_path) in msg
+    # At least one of the dropped repo IDs must appear.
+    assert "claude-sonnet-4-5-20241022" in msg
