@@ -10,6 +10,10 @@ use it from every project on your machine.
 Not a framework. Not a platform. A client library that handles your API key
 so you can focus on the work.
 
+Endpoint behavior diverges in practice; see `docs/ops-guide.md` section
+"Provider-specific behavior" for known differences in auth-failure handling,
+model ID naming, and per-provider parameter quirks.
+
 ## Why this exists
 
 LLM API keys rotate. USAi keys expire every seven days. If you have five

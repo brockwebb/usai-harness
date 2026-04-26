@@ -243,13 +243,39 @@ pip install -r requirements.lock --require-hashes
 
 The lockfile pins every dependency to a specific version and verifies cryptographic hashes. Use this in CI, in production containers, or anywhere install reproducibility matters.
 
-## 7. Troubleshooting
+## 7. Provider-specific behavior
 
-### 7.1 "No API key found" on init
+The harness targets any OpenAI-compatible endpoint, but real endpoints diverge in how they signal failures and what they accept as inputs. The behaviors below have been observed against current endpoints and are stable enough to plan around. They are not bugs in the harness.
+
+### 7.1 Authentication failure status codes
+
+USAi returns HTTP 401 or 403 for an invalid API key. The harness catches both and raises `AuthHaltError`, which drains the worker pool cleanly and preserves the partial results. Gemini's OpenAI-compat endpoint returns HTTP 400 for an invalid key, with a structured JSON body containing `error.status: "INVALID_ARGUMENT"` and a message saying the key is invalid. The harness treats 400 as a non-retryable per-call failure, not as an auth halt, which means a mis-typed Gemini key produces N individual non-retryable failures (one per worker) rather than a clean halt.
+
+Operational mitigation: run `usai-harness verify` or a single `ping` before any long-running Gemini batch. The first response will reveal an invalid key immediately. Do not rely on the pool halting partway through.
+
+The harness deliberately does not attempt to detect auth-failure 400s by inspecting body content. Pattern matching on error message text would be fragile against provider rephrasings. It would also produce false positives on legitimate per-call 400s such as malformed bodies, unsupported parameters, or context-length exceeded, all of which Gemini also returns as 400.
+
+### 7.2 Gemini 2.5 thinking tokens and `max_tokens`
+
+Gemini 2.5 models reserve a portion of the response budget for internal thinking tokens before producing visible content. Setting `max_tokens` below approximately 64 on Gemini 2.5 models can cause the response content to be empty even when the call succeeds with HTTP 200. The recommended floor for Gemini 2.5 smoke tests is `max_tokens=64`. For production batches, size based on the actual content length expected plus a thinking-overhead margin.
+
+This behavior is specific to Gemini 2.5. Earlier Gemini models and other providers do not reserve thinking tokens this way. Successful 200 responses with empty content are the diagnostic signal to raise the budget.
+
+### 7.3 Provider model ID naming
+
+Gemini's `/models` endpoint returns IDs in the form `models/gemini-2.5-flash` rather than the bare `gemini-2.5-flash`. The harness round-trips these correctly: `discover-models` caches them as Gemini returns them, and the live catalog merge uses the full form. Pass model IDs verbatim from the live catalog rather than typing the short form. The `model_requested` and `model_returned` log fields will both reflect the full form for Gemini calls.
+
+### 7.4 Provider registration is interactive
+
+`usai-harness add-provider` prompts for credentials and endpoint details interactively. There is currently no flag-based path for scripted bring-up. For now, register providers manually on each machine that needs them. Once registered, `discover-models <name>` and the rest of the CLI surface work non-interactively.
+
+## 8. Troubleshooting
+
+### 8.1 "No API key found" on init
 
 The `init` command could not resolve a credential from any source. Check that you pasted the key correctly. Check that the terminal did not truncate a long key. Run `init` again and use the paste buffer rather than typing.
 
-### 7.2 "Model not found" error
+### 8.2 "Model not found" error
 
 The model identifier in your code does not match any model in the live catalog. Run `usai-harness discover-models` to refresh the catalog, then check the current list with:
 
@@ -259,7 +285,7 @@ python -c "from usai_harness import USAiClient; import asyncio; asyncio.run(USAi
 
 Or simpler, check the user-level `models.yaml` file directly.
 
-### 7.3 Authentication failures that persist after rotation
+### 8.3 Authentication failures that persist after rotation
 
 The key was refreshed but calls still return 401. Likely causes:
 
@@ -269,21 +295,21 @@ The key was refreshed but calls still return 401. Likely causes:
 
 Run `usai-harness verify` to confirm which credential source is being read.
 
-### 7.4 Batch jobs running slower than expected
+### 8.4 Batch jobs running slower than expected
 
 Check the post-run report for rate-limit events. If the harness tripped 429s and backed off, the average throughput will be lower than the configured rate. This is expected and correct behavior.
 
 If no 429s occurred but throughput is still low, check the worker pool size in your project configuration. The default is 3 workers. For CPU-heavy response processing, you may need more. For strict rate limits like USAi 3/sec, more than 3 workers will not help.
 
-### 7.5 Cost ledger disagrees with post-run report
+### 8.5 Cost ledger disagrees with post-run report
 
 Post-run reports are per-batch. The cost ledger is cumulative across all batches for a project. If you ran multiple batches for the same project, the ledger totals will be higher. Use `usai-harness cost-report --job JOB_NAME` to compare like with like.
 
-### 7.6 `pip-audit` flags a dependency
+### 8.6 `pip-audit` flags a dependency
 
 If the audit reports a known vulnerability in a harness dependency or optional extra, report it as an issue. Major-version dependency bumps require regression testing before adoption.
 
-## 8. Getting Help
+## 9. Getting Help
 
 For usage questions, check the README and the API reference.
 
