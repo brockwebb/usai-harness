@@ -1,8 +1,8 @@
 # Non-Functional Requirements — usai-harness
 
-**Version:** 1.0
-**Date:** 2026-04-24
-**Status:** Baseline
+**Version:** 1.1
+**Date:** 2026-04-25
+**Status:** Audited (Tasks 06-10 reflected)
 
 ## 1. Purpose
 
@@ -43,8 +43,8 @@ Authentication failures, configuration errors, and unrecoverable transport error
 ## 4. Security
 
 **NFR-S-001: No secrets at rest in logs.**
-No file written by the harness (call log, cost ledger, error log, report output) shall contain plaintext API keys, bearer tokens, or credential material.
-*Verification:* Test that injects known key patterns into calls and greps output files. Recurring as part of CI.
+No file written by the harness (call log, cost ledger, error log, report output) shall contain plaintext API keys, bearer tokens, or credential material. The redaction layer is enforced at every output boundary, including the call log entry assembly, the transport error-body snippet capture (per FR-027 and IR-005), and the client exception-handler path. The Task 10 amendment to ADR-007 reverses the prior body-drop behavior; the trade is justified by validated boundary-enforced redaction.
+*Verification:* Unit tests in `test_redaction.py` exercise the scrubber against Bearer tokens, `*_API_KEY` assignments, and `sk-` prefixed strings. Boundary-level tests in `test_transport.py::test_error_body_is_redacted` and `test_transport.py::test_error_body_snippet_redacted` confirm error-body snippets are scrubbed before logging. The Task 08 Gemini smoke test validated the same against a real provider endpoint.
 
 **NFR-S-002: No secrets in version control.**
 The default `.gitignore` shall cover all files that may contain secrets or call content. The `usai-harness audit` command shall verify this coverage.

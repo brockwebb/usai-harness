@@ -1,8 +1,8 @@
 # Requirements Traceability Matrix — usai-harness
 
-**Version:** 1.0
-**Date:** 2026-04-24
-**Status:** Baseline
+**Version:** 1.1
+**Date:** 2026-04-25
+**Status:** Audited (Tasks 06-10 reflected; baseline gaps closed)
 
 ## 1. Purpose
 
@@ -41,16 +41,16 @@ A requirement without an implementation is not yet built. A requirement without 
 | FR-006 | `key_manager.py::CredentialProvider` | `test_key_manager.py::test_backend_selection` | M-1 | ADR-003 | Implemented |
 | FR-007 | `key_manager.py` protocol definition | `test_key_manager.py::test_protocol_compliance` | M-1, M-3 | ADR-003 | Implemented |
 | FR-008 | `configs/models.yaml` schema, `key_manager.py` | `test_config.py::test_per_provider_keys` | M-1 | ADR-003 | Implemented |
-| FR-009 | `key_manager.py::AzureKeyVaultProvider`, `pyproject.toml` extras | `test_key_manager.py::test_azure_provider` | M-1 | ADR-003, ADR-005 | Planned |
-| FR-009a | `key_manager.py::DotEnvProvider` resolution logic | `test_key_manager.py::test_resolution_order` | M-1 | ADR-008 | Planned |
+| FR-009 | `key_manager.py::AzureKeyVaultProvider`, `pyproject.toml` extras | `test_key_manager.py::test_azure_*` | M-1 | ADR-003, ADR-005 | Implemented |
+| FR-009a | `key_manager.py::DotEnvProvider` resolution logic | `test_key_manager.py::test_dotenv_resolution_order_is_exact` | M-1 | ADR-008 | Implemented |
 
 ### 3.3 Authentication Handling
 
 | ID | Implementation | Test | Method | Source | Status |
 |----|----------------|------|--------|--------|--------|
-| FR-010 | `key_manager.py` (absence of expiry state) | `test_key_manager.py::test_no_metadata_file` | M-1, M-3 | ADR-002 | Implemented |
-| FR-011 | `worker_pool.py` halt logic, `client.py` error path | `tests/integration/test_live_usai.py::test_auth_failure_halt` | M-2 | ADR-002 | Implemented |
-| FR-012 | `report.py::ping_cmd` | `test_report.py::test_ping_cli` | M-1, M-2 | ADR-002 | Planned |
+| FR-010 | `key_manager.py` (absence of expiry state) | `test_key_manager.py::test_no_meta_file_created` | M-1, M-3 | ADR-002 | Implemented |
+| FR-011 | `worker_pool.py::AuthHaltError`, `client.py` error path | `test_worker_pool.py::test_401_halts_pool_and_preserves_results`, `test_worker_pool.py::test_403_halts_pool` | M-1, M-2 | ADR-002 | Implemented |
+| FR-012 | `setup_commands.py::handle_ping`, `cli.py` | `test_setup_commands.py::test_ping_*`, `test_cli.py::test_ping_invokes_handler` | M-1 | ADR-002 | Implemented |
 
 ### 3.4 Transport Layer
 
@@ -90,16 +90,16 @@ A requirement without an implementation is not yet built. A requirement without 
 | ID | Implementation | Test | Method | Source | Status |
 |----|----------------|------|--------|--------|--------|
 | FR-026 | `logger.py::CallLogger` | `test_logger.py::test_jsonl_format`, `test_logger.py::test_flush` | M-1 | Component contract | Implemented |
-| FR-027 | `logger.py` default entry schema | `test_logger.py::test_metadata_only_default` | M-1, M-3 | ADR-004, ADR-007 | Implemented |
-| FR-028 | `logger.py` `log_content` flag | `test_logger.py::test_content_opt_in` | M-1 | ADR-004, ADR-007 | Implemented |
-| FR-029 | `client.py`, `logger.py`, `report.py` | `test_logger.py::test_model_echo`, `test_report.py::test_mismatch_flag` | M-1, M-2 | ADR-007 | Implemented |
+| FR-027 | `logger.py` default entry schema, `client.py::_record_outcome`/`_record_result` | `test_logger.py::test_log_call_writes_entry`, `test_logger.py::test_log_entry_includes_error_body_when_present`, `test_logger.py::test_log_entry_omits_error_body_when_none` | M-1, M-3 | ADR-004, ADR-007 (post-amendment) | Implemented |
+| FR-028 | `client.py` `log_content` flag, `logger.py` opt-in fields | `test_client.py::test_content_logging_off_by_default`, `test_client.py::test_content_logging_opt_in_writes_content`, `test_client.py::test_content_logging_warning_on_stderr` | M-1 | ADR-004, ADR-007 | Implemented |
+| FR-029 | `client.py`, `logger.py`, `report.py` | `test_client.py::test_model_echo_matching`, `test_client.py::test_model_echo_mismatch_logged`, `test_report.py::test_report_detects_mismatch` | M-1, M-2 | ADR-007 | Implemented |
 
 ### 3.9 Cost Tracking
 
 | ID | Implementation | Test | Method | Source | Status |
 |----|----------------|------|--------|--------|--------|
 | FR-030 | `cost.py::CostTracker` | `test_cost.py::test_append_only` | M-1 | ADR-004 | Implemented |
-| FR-031 | `cost.py::LedgerEntry` dataclass | `test_cost.py::test_no_content_field` | M-1, M-3 | ADR-004, ADR-007 | Implemented |
+| FR-031 | `cost.py::LedgerEntry` dataclass | `test_cost.py::test_ledger_entry_has_no_content_fields` | M-1, M-3 | ADR-004, ADR-007 | Implemented |
 | FR-032 | `cost.py` rate recording | `test_cost.py::test_retroactive_compute` | M-1 | ADR-004 | Implemented |
 
 ### 3.10 Reporting
@@ -108,38 +108,40 @@ A requirement without an implementation is not yet built. A requirement without 
 |----|----------------|------|--------|--------|--------|
 | FR-033 | `report.py::build_summary` | `test_report.py::test_summary_*` | M-1 | Component contract | Implemented |
 | FR-034 | `report.py::cost_report_cmd` | `test_report.py::test_cost_report_cli` | M-1 | Component contract | Implemented |
-| FR-035 | `report.py::audit_cmd` | `test_report.py::test_audit_*` | M-1, M-4 | ADR-007 | Planned |
+| FR-035 | `audit_command.py::handle_audit`, `cli.py` | `test_audit.py::*`, `test_cli.py::test_audit_*` | M-1, M-4 | ADR-007 | Implemented |
 
 ### 3.11 Setup and Model Discovery
 
 | ID | Implementation | Test | Method | Source | Status |
 |----|----------------|------|--------|--------|--------|
-| FR-036 | `report.py::init_cmd` (or new `setup.py`) | `test_setup.py::test_init_*` | M-1, M-4 | ADR-009 | Planned |
-| FR-037 | `report.py::add_provider_cmd` (or new `setup.py`) | `test_setup.py::test_add_provider_*` | M-1, M-4 | ADR-009 | Planned |
-| FR-038 | `report.py::discover_models_cmd` (or new `setup.py`) | `test_setup.py::test_discover_*` | M-1, M-2 | ADR-009 | Planned |
-| FR-039 | `report.py::verify_cmd` (or new `setup.py`) | `test_setup.py::test_verify_*` | M-1, M-2 | ADR-009 | Planned |
-| FR-040 | `config.py` model list merge logic | `test_config.py::test_live_catalog_precedence` | M-1 | ADR-009 | Planned |
-| FR-041 | Setup command key capture | `test_setup.py::test_getpass_used` | M-1, M-3 | ADR-009 | Planned |
+| FR-036 | `setup_commands.py::handle_init`, `cli.py` | `test_setup_commands.py::test_init_*`, `test_cli.py::test_init_invokes_handler` | M-1 | ADR-009 | Implemented |
+| FR-037 | `setup_commands.py::handle_add_provider`, `cli.py` | `test_setup_commands.py::test_add_provider_*`, `test_cli.py::test_add_provider_passes_name` | M-1 | ADR-009 | Implemented |
+| FR-038 | `setup_commands.py::handle_discover_models`, `cli.py` | `test_setup_commands.py::test_discover_models_*`, `test_cli.py::test_discover_models_*` | M-1 | ADR-009 | Implemented |
+| FR-039 | `setup_commands.py::handle_verify`, `cli.py` | `test_setup_commands.py::test_verify_*`, `test_cli.py::test_verify_invokes_handler` | M-1 | ADR-009 | Implemented |
+| FR-040 | `config.py::_apply_live_catalog` | `test_config.py::test_live_catalog_*`, `test_config.py::test_live_model_not_in_repo_gets_synthesized_defaults`, `test_config.py::test_repo_model_not_in_live_is_dropped` | M-1 | ADR-009 | Implemented |
+| FR-041 | `setup_commands.py` getpass usage | `test_setup_commands.py::test_no_input_used_for_keys` | M-1, M-3 | ADR-009 | Implemented |
+| FR-042 | `config.py::_apply_live_catalog` drop warning | `test_config.py::test_apply_live_catalog_warns_on_dropped_models` | M-1 | ADR-009 amendment | Implemented |
 
 ## 4. Security Requirements
 
 | ID | Implementation | Test | Method | Source | Status |
 |----|----------------|------|--------|--------|--------|
-| SEC-001 | `logger.py` redaction, `transport.py` error paths | `test_logger.py::test_redaction`, `tests/integration/test_live_usai.py::test_no_key_in_logs` | M-1, M-2 | ADR-007 | Implemented |
-| SEC-002 | `config.py` uses `yaml.safe_load` only | `test_config.py::test_yaml_safe_only`, CI lint | M-1, M-3 | ADR-007 | Implemented |
-| SEC-003 | `transport.py::HttpxTransport` TLS default, warning on verify=False | `test_transport.py::test_tls_verify_warning` | M-1 | ADR-007 | Implemented |
-| SEC-004 | `configs/models.yaml` schema (no secret fields) | `test_config.py::test_no_secrets_in_config` | M-3 | ADR-003 | Implemented |
-| SEC-005 | `.gitignore`, `report.py::audit_cmd` | `test_report.py::test_audit_gitignore` | M-3, M-4 | ADR-007 | Planned |
-| SEC-006 | `requirements.lock` at repo root | CI job: install with `--require-hashes` | M-4 | ADR-005, ADR-007 | Planned |
+| SEC-001 | `redaction.py::redact_secrets`, `logger.py`, `transport.py` error body capture, `client.py` exception path | `test_redaction.py::*`, `test_transport.py::test_error_body_is_redacted`, `test_transport.py::test_error_body_snippet_redacted`, `test_client.py::test_complete_exception_is_redacted` | M-1 | ADR-007 (post-amendment) | Implemented |
+| SEC-002 | `config.py`, `setup_commands.py` use `yaml.safe_load`/`safe_dump` | inspection of imports; no `yaml.load` calls | M-3 | ADR-007 | Implemented |
+| SEC-003 | `transport.py::HttpxTransport` TLS default, warning on verify=False | `test_transport.py::test_tls_verify_disabled_warns_per_call`, `test_transport.py::test_tls_verify_default_silent` | M-1 | ADR-007 | Implemented |
+| SEC-004 | `configs/models.yaml` schema (no secret fields) | `test_config.py::test_providers_block_parsed`, inspection | M-3 | ADR-003 | Implemented |
+| SEC-005 | `.gitignore`, `audit_command.py::handle_audit` | `test_audit.py::test_gitignore_*` | M-1, M-3, M-4 | ADR-007 | Implemented |
+| SEC-006 | `requirements.lock` at repo root, `tests/test_repo_hygiene.py` | `test_repo_hygiene.py::test_requirements_lock_*` | M-1, M-4 | ADR-005, ADR-007 | Implemented |
 
 ## 5. Interface Requirements
 
 | ID | Implementation | Test | Method | Source | Status |
 |----|----------------|------|--------|--------|--------|
-| IR-001 | `usai_harness/__init__.py` exports | `test_client.py::test_public_api` | M-1, M-3 | SRS Section 6 | Implemented |
-| IR-002 | `pyproject.toml` console script | `test_report.py::test_cli_entry_point` | M-1 | SRS Section 6 | Implemented |
-| IR-003 | `configs/models.yaml` schema, `config.py` validation | `test_config.py::test_schema_*` | M-1, M-3 | SRS Section 6 | Implemented |
-| IR-004 | `config.py` project config validation | `test_config.py::test_project_schema` | M-1 | SRS Section 6 | Implemented |
+| IR-001 | `usai_harness/__init__.py` exports | inspection (USAiClient surface stable) | M-1, M-3 | SRS Section 6 | Implemented |
+| IR-002 | `pyproject.toml` console script `usai-harness = "usai_harness.cli:cli_main"` | `test_cli.py::*` (all dispatcher tests) | M-1 | SRS Section 6 | Implemented |
+| IR-003 | `configs/models.yaml` schema, `config.py` validation | `test_config.py::test_providers_block_parsed`, `test_config.py::test_provider_with_api_key_secret_loads`, `test_config.py::test_provider_with_neither_field_raises`, `test_config.py::test_secret_map_*` | M-1, M-3 | SRS Section 6 | Implemented |
+| IR-004 | `config.py::load_project_config` validation | `test_config.py::test_project_config_credentials_*`, `test_config.py::test_load_project_config_valid` | M-1 | SRS Section 6 | Implemented |
+| IR-005 | `config.py` `error_body_snippet_max_chars` validation, `transport.py` consumer | `test_config.py::test_error_body_snippet_max_chars_*`, `test_transport.py::test_error_body_snippet_*` | M-1 | ADR-007 (post-amendment) | Implemented |
 
 ## 6. Non-Functional Requirements
 
@@ -165,7 +167,7 @@ A requirement without an implementation is not yet built. A requirement without 
 | ID | Verification | Evidence | Method | Status |
 |----|--------------|----------|--------|--------|
 | NFR-S-001 | Key-pattern grep across all output files | CI test output | M-1, M-2 | Implemented |
-| NFR-S-002 | `.gitignore` coverage test + audit command | `test_report.py::test_audit_gitignore` | M-1, M-4 | Planned |
+| NFR-S-002 | `.gitignore` coverage test + audit command | `test_audit.py::test_gitignore_all_present_passes`, `test_audit.py::test_gitignore_missing_reports`, `test_audit.py::test_gitignore_missing_fix_appends` | M-1, M-4 | Implemented |
 | NFR-S-003 | `!!python/object` YAML rejection | `test_config.py::test_unsafe_yaml_rejected` | M-1 | Implemented |
 | NFR-S-004 | `pip-audit` in CI | CI job output | M-4 | Planned |
 | NFR-S-005 | Install-from-lockfile CI job | CI job output | M-4 | Planned |
@@ -201,16 +203,16 @@ A requirement without an implementation is not yet built. A requirement without 
 
 | Category | Total | Implemented | Planned | Not Started |
 |----------|-------|-------------|---------|-------------|
-| Functional (FR) | 42 | 31 | 11 | 0 |
-| Security (SEC) | 6 | 4 | 2 | 0 |
-| Interface (IR) | 4 | 4 | 0 | 0 |
+| Functional (FR) | 43 | 42 | 1 | 0 |
+| Security (SEC) | 6 | 6 | 0 | 0 |
+| Interface (IR) | 5 | 5 | 0 | 0 |
 | NFR Performance | 3 | 0 | 3 | 0 |
 | NFR Reliability | 4 | 0 | 4 | 0 |
-| NFR Security | 5 | 2 | 3 | 0 |
+| NFR Security | 5 | 3 | 2 | 0 |
 | NFR Portability | 4 | 0 | 4 | 0 |
 | NFR Maintainability | 5 | 3 | 2 | 0 |
 | NFR Usability | 3 | 0 | 3 | 0 |
-| **Total** | **76** | **44** | **32** | **0** |
+| **Total** | **78** | **59** | **19** | **0** |
 
 Status definitions:
 
@@ -220,14 +222,17 @@ Status definitions:
 
 ## 8. Known Gaps Between Current Code and This RTM
 
-The RTM reflects the post-documentation baseline. The following items are documented requirements whose current code is inconsistent and require a cleanup CC task to align:
+The four baseline gaps documented at v1.0 (FR-009a resolution order, FR-010 reactive auth, FR-036–FR-041 setup CLIs, FR-040 endpoint-authoritative models) were closed in the alignment sweep landed across CC Tasks 01 through 05 (commits `77d1184` through `8ed31c6`).
 
-1. **FR-009a (DotEnvProvider resolution order).** Current `key_manager.py` reads only project-local `.env`. User-level resolution needs adding.
-2. **FR-010 (reactive authentication).** Current `key_manager.py` has expiry metadata logic from an earlier design. Needs removal.
-3. **FR-036 through FR-041 (setup, add-provider, discover-models, verify).** No CLI subcommands exist yet for these. Implementation required.
-4. **FR-040 (endpoint as source of truth for models).** Current `configs/models.yaml` has placeholder model IDs. Needs replacement with verified IDs from the `usai-api-tester` companion tool, and live-discovery logic added.
+What remains as Planned at the time of this audit is work gated on either a live USAi endpoint key or CI infrastructure that has not yet been set up. None of these blocks any user-facing functionality.
 
-These gaps are expected for a baseline documentation pass that predates the code. They are the scope for the first post-documentation implementation task.
+1. **FR-014 (LiteLLMTransport).** The transport stub exists and raises `NotImplementedError`. Full implementation is intentionally deferred per ADR-001 until the LiteLLM optional path is exercised against a real provider need.
+2. **NFR Performance row (P-001 through P-003).** Throughput and overhead measurements require a live endpoint with a key budget and a stable test window.
+3. **NFR Reliability row (R-001 through R-004).** Injected-failure scenarios require live-endpoint orchestration; the unit tests cover the harness behavior but not the end-to-end recovery story.
+4. **NFR Security S-004 (pip-audit in CI) and S-005 (lockfile install in CI).** No `.github/workflows/` directory exists yet; both depend on a CI workflow being added.
+5. **NFR Portability row (PO-001 through PO-004).** Multi-version, multi-OS, and multi-provider verification all need CI matrix runs that have not yet been wired up.
+6. **NFR Maintainability M-004 (add-provider walkthrough) and M-005 (CHANGELOG discipline).** M-004 is documentation-only; M-005 depends on `CHANGELOG.md` being kept current PR-by-PR going forward.
+7. **NFR Usability row (U-001 through U-003).** Error-path and `--help` reviews are pending; the `--help` substance is verified indirectly by the CLI dispatcher tests in `test_cli.py`.
 
 ## 9. Maintenance
 

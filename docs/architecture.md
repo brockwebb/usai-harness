@@ -1,8 +1,8 @@
 # Architecture — usai-harness
 
-**Version:** 1.0
-**Date:** 2026-04-24
-**Status:** Baseline
+**Version:** 1.1
+**Date:** 2026-04-25
+**Status:** Audited (Tasks 06-10 reflected)
 
 ## 1. Purpose
 
@@ -81,13 +81,15 @@ Loads `configs/models.yaml` and optional project configuration. Validates requir
 
 Uses `yaml.safe_load` exclusively. Rejects invalid configuration at construction time rather than at call time.
 
+After parsing the seed `configs/models.yaml`, `ConfigLoader` merges the user-level live model catalog written by `usai-harness init` and `discover-models` (located alongside the user-level `.env`). Per FR-040, the live catalog is authoritative for which models exist; per FR-042, any seed model absent from the live catalog is dropped, and a WARN-level log entry lists the dropped IDs and the live catalog file path so the failure mode is visible rather than silent.
+
 ### 3.3 `key_manager.py` — Credentials
 
 Defines the `CredentialProvider` protocol and ships three implementations:
 
-- `DotEnvProvider` reads from `.env`. Resolution order is project-local `.env`, then user-level `.env` in the per-user configuration directory, then OS environment variables. The user-level location is `~/.config/usai-harness/.env` on Linux and macOS, and `%APPDATA%\usai-harness\.env` on Windows. One rotation of the user-level file propagates to every project using the harness on that machine.
-- `EnvVarProvider` reads from OS environment variables directly. Suited to CI, containers, and orchestrator-managed environments.
-- `AzureKeyVaultProvider` reads from Azure Key Vault (optional install).
+- `DotEnvProvider` reads from `.env`. Resolution order is project-local `.env`, then user-level `.env` in the per-user configuration directory, then OS environment variables. The user-level location is `~/.config/usai-harness/.env` on Linux and macOS, and `%APPDATA%\usai-harness\.env` on Windows. One rotation of the user-level file propagates to every project using the harness on that machine. The provider names the environment variable to read via `api_key_env` in the `providers:` block.
+- `EnvVarProvider` reads from OS environment variables directly. Suited to CI, containers, and orchestrator-managed environments. Uses `api_key_env` in the same way as `DotEnvProvider`.
+- `AzureKeyVaultProvider` reads from Azure Key Vault (optional install). Names a Key Vault secret via `api_key_secret` in the `providers:` block. Accepts `api_key_env` as a deprecated fallback in 0.1.x with a `DeprecationWarning`; removal target 0.2.0 (ADR-009 amendment).
 
 The protocol exposes one method: `get_key(provider: str) -> str`. Providers do not track expiry or freshness. Authentication validity is determined by endpoint response (ADR-002).
 
@@ -98,7 +100,7 @@ Defines the transport contract and ships two implementations:
 - `HttpxTransport` uses `httpx` to call OpenAI-compatible endpoints directly.
 - `LiteLLMTransport` wraps LiteLLM for environments that permit it (optional install).
 
-Transports are selected per project via configuration. New transports can be added without changes to any other module (ADR-001).
+Transports are selected per project via configuration. New transports can be added without changes to any other module (ADR-001). On non-2xx responses, the transport captures up to `error_body_snippet_max_chars` characters of the response body, runs the truncated text through `redact_secrets` (ADR-007 amendment, IR-005), and surfaces it to the client under `error_body`. Binary content types are skipped. The redaction layer is the load-bearing security boundary for this capture; the prior conservative drop was reversed once boundary-enforced redaction was validated (Task 08, Task 10).
 
 ### 3.5 `rate_limiter.py` — Rate Limiter
 
@@ -257,9 +259,11 @@ Backends are selected by project configuration. The default is `DotEnvProvider`.
 Model configuration (`configs/models.yaml`):
 
 ```yaml
+error_body_snippet_max_chars: 200       # default; range 1..2000
+
 providers:
   usai:
-    base_url: https://usai.example.gov/v1
+    base_url: https://usai.example.gov/api/v1
     api_key_env: USAI_API_KEY
     rate:
       refill_per_sec: 2.8
@@ -270,9 +274,12 @@ providers:
     rate:
       refill_per_sec: 10
       burst: 20
+  azure-openai:
+    base_url: https://my-azure-instance.openai.azure.com
+    api_key_secret: azure-openai-secret-name   # Azure backend uses a Vault secret name
 
 models:
-  llama-4-maverick:
+  "meta-llama/Llama-4-Maverick-17B-128E-Instruct":
     provider: usai
     input_rate_per_1k: 0.0
     output_rate_per_1k: 0.0

@@ -1,8 +1,8 @@
 # Software Requirements Specification — usai-harness
 
-**Version:** 1.0
-**Date:** 2026-04-24
-**Status:** Baseline
+**Version:** 1.1
+**Date:** 2026-04-25
+**Status:** Audited (Tasks 06-10 reflected)
 
 ## 1. Purpose and Scope
 
@@ -160,8 +160,8 @@ The harness shall write one structured JSONL entry per call to the call log. The
 *Source:* Component contract in `logger.py`.
 
 **FR-027: Default metadata-only logging.**
-The default call-log entry shall contain: timestamp, project, job, task ID, model requested, model returned, status, latency, token counts, and error category. Prompt and response content shall not be written by default.
-*Source:* ADR-004, ADR-007.
+The default call-log entry shall contain: timestamp, project, job, task ID, model requested, model returned, status, latency, token counts, and error category. Prompt and response content shall not be written by default. Failed-call entries shall additionally contain a redacted error body snippet under field `error_body`, truncated to the configured maximum character length (IR-005), when the response body is capturable as text.
+*Source:* ADR-004, ADR-007 (post-amendment).
 
 **FR-028: Opt-in content logging.**
 Full prompt and response logging shall be enabled via an explicit `log_content=True` flag, documented as debugging-only and potentially PII-exposing.
@@ -225,6 +225,10 @@ The live model catalog retrieved from the provider endpoint shall be the authori
 Interactive subcommands that prompt for API keys shall use `getpass.getpass()` or an equivalent non-echoing input method. Keys shall not be echoed to the terminal and shall not be captured by shell history mechanisms during interactive prompting.
 *Source:* ADR-009.
 
+**FR-042: Authoritative live catalog drop warning.**
+When merging the seed model catalog with the user-level live catalog, the harness shall emit a WARN-level log entry listing any model identifiers present in the seed configuration but absent from the live catalog. The log entry shall include the live catalog file path. Models identified as missing shall be dropped from the runtime catalog per FR-040.
+*Source:* ADR-009 amendment, surfaced by Task 06.
+
 ## 5. Security Requirements
 
 **SEC-001: Secret redaction.**
@@ -264,6 +268,10 @@ The package shall register a `usai-harness` console entry point. Subcommands sha
 
 **IR-004: Project configuration schema.**
 Project configuration shall accept a `credentials` block selecting the backend, a `transport` field selecting httpx or litellm, and optional overrides for worker pool size and rate-limit parameters.
+
+**IR-005: Error body snippet configuration.**
+Configuration shall accept a top-level `error_body_snippet_max_chars` integer specifying the maximum character length of error response body snippets logged on failed calls (FR-027). The valid range shall be 1 through 2000 inclusive. The default shall be 200. Configurations specifying values outside this range shall be rejected at load.
+*Source:* ADR-007 (post-amendment).
 
 ## 7. Constraints and Assumptions
 

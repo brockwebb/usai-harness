@@ -1,8 +1,8 @@
 # Test, Evaluation, Verification, and Validation Plan — usai-harness
 
-**Version:** 1.0
-**Date:** 2026-04-24
-**Status:** Baseline
+**Version:** 1.1
+**Date:** 2026-04-25
+**Status:** Audited (Tasks 06-10 reflected; integration suite written, not yet run against live USAi)
 
 ## 1. Purpose
 
@@ -47,36 +47,46 @@ Each module in `usai_harness/` has a dedicated test file in `tests/`. Unit tests
 
 | Module | Test file | Focus |
 |--------|-----------|-------|
-| `client.py` | `test_client.py` | Wiring, lifecycle, context management. Mocks transport, credentials, workers. |
-| `config.py` | `test_config.py` | Config loading, schema validation, provider/model resolution, rejection of malformed input. |
-| `key_manager.py` | `test_key_manager.py` | CredentialProvider protocol. Each provider backend (dotenv, envvar, azure) with mocked sources. |
-| `transport.py` | `test_transport.py` | Transport contract conformance. HttpxTransport with mocked httpx client. |
+| `client.py` | `test_client.py` | Wiring, lifecycle, context management, model echo, log_content opt-in. Mocks transport, credentials, workers. |
+| `config.py` | `test_config.py` | Config loading, schema validation, provider/model resolution, live catalog merge with drop warning, error_body_snippet_max_chars validation. |
+| `key_manager.py` | `test_key_manager.py` | CredentialProvider protocol. Each provider backend (dotenv, envvar, azure) with mocked sources. Per-OS user_config_env_path resolution. Factory dispatch. |
+| `transport.py` | `test_transport.py` | Transport contract conformance. HttpxTransport with mocked httpx client. TLS-verify warning. Error body snippet capture, redaction, truncation, binary skip, body-read failure. |
+| `redaction.py` | `test_redaction.py` | Bearer / *_API_KEY / sk- token scrubbing. Recursive dict/list/tuple walk. No mutation of inputs. |
 | `rate_limiter.py` | `test_rate_limiter.py` | Token bucket math, adaptive rate adjustment, floor and ceiling. |
-| `worker_pool.py` | `test_worker_pool.py` | Task distribution, retry, halt on fatal errors, checkpoint integration. |
-| `logger.py` | `test_logger.py` | JSONL format, redaction, flush-per-write, content opt-in. |
-| `cost.py` | `test_cost.py` | Ledger format, rate application, aggregation, structural absence of content field. |
-| `report.py` | `test_report.py` | Summary computation, CLI subcommand registration. |
+| `worker_pool.py` | `test_worker_pool.py` | Task distribution, retry, AuthHaltError on 401/403, deferred-task preservation. |
+| `logger.py` | `test_logger.py` | JSONL format, redaction, flush-per-write, content opt-in, error_body presence/omission. |
+| `cost.py` | `test_cost.py` | Ledger format, rate application, aggregation, structural absence of content field on `LedgerEntry`. |
+| `report.py` | `test_report.py` | Summary computation, model-mismatch detection, backward-compat fallback for legacy `model` field. |
+| `setup_commands.py` | `test_setup_commands.py` | init / add-provider / discover-models / verify / ping handlers. URL composition. AST guard against `input()` for keys. |
+| `audit_command.py` | `test_audit.py` | Gitignore coverage check, tracked-secret scan, pip-audit soft fallback. |
+| `cli.py` | `test_cli.py` | Argparse dispatch routing for every subcommand. |
+| repo hygiene | `test_repo_hygiene.py` | `requirements.lock` exists and contains hash pins. |
 
 Unit test coverage target: 80 percent for modules other than `transport.py`. `transport.py` is exercised primarily by integration tests because most of its behavior depends on live HTTP semantics.
+
+Current unit-test count at audit time (Tasks 06-10 reflected): 208 tests passing across 14 test files, including 9 redaction tests, 11 CLI dispatcher tests, 23 setup-command tests, 7 audit tests, and 2 repo-hygiene checks added during the alignment sweep.
 
 ### 4.2 Integration Tests
 
 Integration tests run against a live LLM endpoint. They require a valid API key and outbound HTTPS access. They are not run in CI by default because they cost money, require credentials, and depend on external availability.
 
-Integration test suite at `tests/integration/`. Entry point: `python tests/integration/test_live_usai.py`. The suite covers:
+Integration test suite at `tests/integration/`. Entry point: `python tests/integration/test_live_usai.py`. The runner is a standalone Python script (not a pytest target) that executes 11 numbered checks against the configured default provider:
 
-1. Single-call completion against configured default model.
-2. Batch of ten calls with rate limiting observed.
-3. Rate limit tripping (deliberate burst) and adaptive backoff recovery.
-4. Authentication failure handling (invalid key injected mid-batch).
-5. Checkpoint and resume after simulated interruption.
-6. Model echo check (request model X, verify response reports model X).
-7. Cost ledger entry count matches successful call count.
-8. Call log redaction (inject known key pattern, verify absence from log).
-9. `usai-harness ping` against live endpoint.
-10. `usai-harness discover-models` against live endpoint.
+1. `client_initializes` — credential resolves, provider config loaded, base URL extracted.
+2. `single_completion` — one chat-completion call returns OpenAI-format body with usage tokens.
+3. `system_prompt` — system prompt is honored.
+4. `temperature_deterministic` — `temperature=0.0` produces identical outputs across two calls (WARN when the model is non-deterministic at 0).
+5. `small_batch` — 5-task batch completes through the worker pool with non-zero latencies.
+6. `log_file_written` — the per-run JSONL log exists and every entry has `timestamp`, `task_id`, `model_requested`, `status_code`.
+7. `cost_ledger_written` — `cost_ledger.jsonl` has at least one entry with the required fields.
+8. `post_run_report` — `generate_report` and `format_report` succeed against the live log.
+9. `throughput_within_bounds` — observed throughput is within USAi's 3/sec ceiling and above 0.5/sec.
+10. `bad_model_graceful` — a bogus model ID produces a graceful error, not an unhandled exception.
+11. `auth_halt_on_rotated_key` — a deliberately invalid key triggers `AuthHaltError` (PASS) when the endpoint returns 401/403, or WARN when it returns another status code (e.g., Gemini's 400; see ops-guide §7.1).
 
-Results are captured to `tests/integration/results/{timestamp}/` with call log, cost ledger, and pass/fail summary.
+Status (current): the suite has been written and validated end-to-end against Google's OpenAI-compat endpoint as part of the Task 08 Gemini smoke test. It has not yet been executed against a live USAi endpoint; that run is gated on USAi key availability. The Gemini run surfaced and documented one provider-specific divergence (test 11 returns WARN for Gemini because Google returns HTTP 400, not 401/403, on invalid keys).
+
+Results are captured to `tests/integration/logs/` with per-run call log and cost ledger, plus the pass/warn/fail summary printed by the runner.
 
 ### 4.3 Security Tests
 
@@ -84,15 +94,17 @@ Security tests verify SEC requirements and NFR-S quality attributes.
 
 | Requirement | Verification | Method |
 |-------------|--------------|--------|
-| SEC-001 secret redaction | Inject known key pattern into calls, grep all output files for the pattern. | M-2, automated |
-| SEC-002 yaml.safe_load only | Grep codebase for `yaml.load(` outside test fixtures. | M-3, lint rule in CI |
-| SEC-003 TLS verification | Attempt call with `verify=False`, observe stderr warning on every call. | M-2 |
-| SEC-004 no secrets in config files | Inspect `configs/models.yaml` schema and examples. | M-3 |
-| SEC-005 gitignore coverage | Run `usai-harness audit`, verify sensitive paths are covered. | M-4 |
-| SEC-006 hash-pinned install | Run `pip install -r requirements.lock --require-hashes` in clean env, run test suite. | M-4, CI job |
-| NFR-S-001 no secrets at rest | Same as SEC-001 but across a full batch run. | M-2, CI |
+| SEC-001 secret redaction | `test_redaction.py` exercises the scrubber; `test_transport.py::test_error_body_*` confirms boundary-enforced redaction; integration runner step 7 greps the call log for known patterns. | M-1 (primary), M-2 (live confirmation) |
+| SEC-002 yaml.safe_load only | Grep `usai_harness/` for `yaml.load(` outside the safe path. | M-3, manual + recurring |
+| SEC-003 TLS verification | `test_transport.py::test_tls_verify_disabled_warns_per_call` and `test_tls_verify_default_silent`. | M-1 |
+| SEC-004 no secrets in config files | Inspect `configs/models.yaml` schema; `audit` regex flags any tracked-file leak. | M-3 |
+| SEC-005 gitignore coverage | `test_audit.py::test_gitignore_*`. | M-1 |
+| SEC-006 hash-pinned install | `test_repo_hygiene.py::test_requirements_lock_*` plus `pip install -r requirements.lock --require-hashes` in a clean env. | M-1, M-4 (CI job pending) |
+| NFR-S-001 no secrets at rest | `test_redaction.py::*`, transport error-body redaction tests, integration runner step 7. | M-1 (primary), M-2 (live) |
+| NFR-S-002 .gitignore coverage | `test_audit.py::test_gitignore_*`. | M-1 |
 | NFR-S-003 YAML attack surface | Attempt YAML with `!!python/object` constructor, verify rejection. | M-1 |
-| NFR-S-004 dependency auditability | Run `pip-audit` in CI. | M-4, CI |
+| NFR-S-004 dependency auditability | Run `pip-audit` in CI (CI workflow not yet present; deferred). | M-4 |
+| NFR-S-005 lockfile install | `pip install -r requirements.lock --require-hashes` in a clean env (CI workflow not yet present; deferred). | M-4 |
 
 ### 4.4 Performance Tests
 
