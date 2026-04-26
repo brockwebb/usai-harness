@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- GitHub Actions CI workflow at `.github/workflows/ci.yml`. Test matrix across Linux, macOS, and Windows on Python 3.12, 3.13, and 3.14. Separate jobs for `pip-audit` (advisory, soft-fail with findings surfaced to the job summary) and lockfile-install verification (`pip install --require-hashes -r requirements.lock` plus a hard-deps-only smoke test).
+- Dependabot configuration at `.github/dependabot.yml` for weekly pip and github-actions dependency update PRs.
 - `error_body` field on failed-call log entries. Captures up to `error_body_snippet_max_chars` (default 200, range 1-2000) of the response body on non-2xx responses, passed through `redact_secrets()` before write. Skipped for binary content types and on body-read failure. Surfaces endpoint-side rejection reasons such as Gemini's "API key not valid" message that were previously lost.
 - `error_body_snippet_max_chars` top-level configuration setting in `configs/models.yaml` and project config, validated at load.
 - `tests/conftest.py` autouse fixture that redirects user-level config paths into a per-test tmp directory. Eliminates leakage of populated user-level catalogs into config tests.

@@ -1,5 +1,7 @@
 # usai-harness
 
+![CI](https://github.com/brockwebb/usai-harness/actions/workflows/ci.yml/badge.svg)
+
 **Built for USAi. Works with any OpenAI-compatible endpoint.**
 
 A Python client library that handles the annoying parts of calling a large
