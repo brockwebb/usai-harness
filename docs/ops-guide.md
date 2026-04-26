@@ -49,6 +49,8 @@ usai-harness verify
 
 This runs an end-to-end check against every configured provider: credential resolves, endpoint is reachable, model catalog returns, test call succeeds. Useful to confirm everything works before depending on it in a real job.
 
+Once verify passes, the fastest way to confirm the harness works from your own code is to run `python docs/examples/01_quickstart.py`. It is a thirty-line script that issues one completion through the public Python API.
+
 ## 2. Key Rotation
 
 ### 2.1 USAi keys (DotEnv backend, default)

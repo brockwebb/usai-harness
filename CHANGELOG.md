@@ -6,6 +6,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- `error_body` field on failed-call log entries. Captures up to `error_body_snippet_max_chars` (default 200, range 1-2000) of the response body on non-2xx responses, passed through `redact_secrets()` before write. Skipped for binary content types and on body-read failure. Surfaces endpoint-side rejection reasons such as Gemini's "API key not valid" message that were previously lost.
+- `error_body_snippet_max_chars` top-level configuration setting in `configs/models.yaml` and project config, validated at load.
+- `tests/conftest.py` autouse fixture that redirects user-level config paths into a per-test tmp directory. Eliminates leakage of populated user-level catalogs into config tests.
+- `SECURITY.md` vulnerability disclosure policy at repo root. GitHub private vulnerability reporting as primary channel, security-only email fallback, ninety-day default coordination window, scope and non-scope explicit.
+- Operations guide section 7 "Provider-specific behavior" documenting four observed divergences between USAi and Gemini: auth-failure status code (401/403 vs 400), Gemini 2.5 thinking-token budget interaction with `max_tokens`, model ID prefix (`models/...`), and interactive-only `add-provider`.
+- README caveat referring readers to ops-guide section 7 for known endpoint divergences.
+- SRS FR-042 (authoritative drop warning is a documented requirement, not just an implementation detail).
+- SRS IR-005 (`error_body_snippet_max_chars` is a config schema element).
+- API reference Section 4.2 documents the `api_key_env` vs `api_key_secret` split.
+- API reference Section 5.1 shows a failed-call example with `error_body`.
+- API reference Section 6 cross-references the per-provider auth-failure divergence.
+
+### Changed
+- Engineering documentation spine (`docs/srs.md`, `docs/rtm.md`, `docs/nfr.md`, `docs/architecture.md`, `docs/tevv-plan.md`) brought current with the alignment sweep and Tasks 06 through 10. RTM Section 8 repurposed from baseline-gaps to current-remaining-work; coverage summary recomputed after FR-042 and IR-005 additions.
+- ADR-007 amended to document the reversal of the original Task 04 conservative decision to drop error response bodies. Boundary-enforced redaction validated by Task 08 Gemini smoke test now makes diagnostic body capture safe.
+- `transport.py` module docstring documents the rationale for error body snippet capture and warns future contributors against reverting it.
+- Test count: 208 unit tests (was 195 at 0.1.0).
+
 ## [0.1.0] - 2026-04-24
 
 First release. Pip-installable Python client library for rate-limited, model-agnostic LLM calls against OpenAI-compatible endpoints, built for USAi and designed to work anywhere. 195 unit tests pass; the integration test against a live endpoint is staged but has not yet been executed against a live key.

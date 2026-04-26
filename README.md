@@ -187,6 +187,10 @@ The library applies safe defaults without asking:
 Run `usai-harness audit` to verify your project's gitignore covers
 sensitive files and that no keys have been accidentally committed.
 
+## Examples
+
+Three runnable scripts in `docs/examples/` cover the common patterns: a one-call quickstart, a small batch with per-task inspection, and a programmatic audit. Run `usai-harness init` first so a key is configured, then run any of the scripts directly. See `docs/examples/README.md` for what each one demonstrates and what to expect.
+
 ## Is this project officially endorsed?
 
 No. See [DISCLAIMER.md](DISCLAIMER.md).

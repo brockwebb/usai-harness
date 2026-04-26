@@ -7,6 +7,8 @@ This document specifies the public API, configuration schemas, CLI interface, an
 
 ## 1. Public Python API
 
+See also: `docs/examples/` contains three runnable scripts that exercise the surface described in this section.
+
 ### 1.1 `USAiClient`
 
 The single public class. Manages lifecycle for credentials, transport, rate limiting, logging, and cost tracking.
