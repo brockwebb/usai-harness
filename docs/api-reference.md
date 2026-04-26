@@ -164,10 +164,15 @@ models:
     output_rate_per_1k: 0.015
 ```
 
+**Top-level fields:**
+
+- `error_body_snippet_max_chars` (optional, default 200): Maximum character length of the error body snippet captured from non-2xx responses and written to the call log under `error_body`. Valid range 1 through 2000 inclusive. Configurations specifying values outside this range are rejected at load with `ConfigValidationError`. See section 5.1 for the snippet semantics.
+
 **Provider fields:**
 
-- `base_url` (required): Root URL of the provider. The harness appends `/api/v1/chat/completions` and `/api/v1/models` as needed.
-- `api_key_env` (required): Name of the environment variable or `.env` key that holds the API key for this provider.
+- `base_url` (required): Root URL of the provider. The harness appends `/chat/completions` and `/models` to the configured base URL as needed; the path prefix (such as `/api/v1` or `/v1beta/openai`) belongs in `base_url`.
+- `api_key_env` (one of two credential references): Name of the environment variable or `.env` key that holds the API key for this provider. Required for `dotenv` and `env_var` credential backends.
+- `api_key_secret` (one of two credential references): Name of the secret in the configured Key Vault. Required for the `azure_keyvault` credential backend. For Azure backends, `api_key_env` is accepted as a deprecated fallback in 0.1.x (with `DeprecationWarning`); removal target 0.2.0.
 - `rate` (optional): Rate-limit parameters. Defaults to 2.8/sec refill with burst 3.
 - `default_model` (optional): Model to use when a call does not specify one.
 
@@ -339,6 +344,16 @@ class CredentialProvider(Protocol):
 - `EnvVarProvider`
 - `AzureKeyVaultProvider` (requires `.[azure]`)
 
+**Credential reference field**
+
+The `providers:` block in `configs/models.yaml` carries one credential reference per entry. The field is named per backend.
+
+For `DotEnvProvider` and `EnvVarProvider`, set `api_key_env` to the environment variable name from which the key is read. The DotEnv provider checks the project-local `.env`, then the user-level `.env`, then the OS environment in that order; the env-var provider checks only the OS environment.
+
+For `AzureKeyVaultProvider`, set `api_key_secret` to the secret name in the configured Key Vault. The provider's `vault_url` selects which vault.
+
+A provider entry may set both fields. The active credentials backend determines which is read. For the Azure backend, `api_key_env` is accepted as a deprecated fallback in 0.1.x and emits a `DeprecationWarning` at config load. Removal target is 0.2.0. Migration: rename `api_key_env` to `api_key_secret` in `providers:` entries that point at Azure-backed credentials.
+
 **To add a new backend:**
 
 1. Implement the protocol.
@@ -372,6 +387,27 @@ One JSON object per line. Default entry:
 ```
 
 When `log_content=True` is set on a batch, two additional fields appear: `prompt` (list of message dicts) and `response` (string). These fields are omitted entirely when `log_content` is false, not just empty.
+
+Failed call entry:
+
+```json
+{
+  "timestamp": "2026-04-24T14:23:11.412Z",
+  "project": "my-project",
+  "job": "my-batch",
+  "task_id": "q_0042",
+  "model_requested": "gemini-2.5-flash",
+  "model_returned": null,
+  "provider": "gemini",
+  "status": "failed",
+  "status_code": 400,
+  "latency_ms": 312,
+  "error": "HTTP 400: non-retryable status",
+  "error_body": "{\"error\":{\"code\":400,\"message\":\"API key not valid. Please pass a valid API key.\",\"status\":\"INVALID_ARGUMENT\"}}"
+}
+```
+
+The `error_body` field appears on failed-call entries and contains a redacted snippet of the response body, truncated to `error_body_snippet_max_chars` (default 200) characters. The snippet passes through `redact_secrets()` before being written; Bearer headers and provider-shaped key strings are scrubbed. Binary content types (anything not `application/json` or `text/*`) are not captured. The field is omitted entirely on successful calls and on failed calls where body capture failed (read error, encoding error, or empty body).
 
 The call log is always flushed after each write. Readers tailing the file see entries in near real time.
 
@@ -427,7 +463,7 @@ Serialized to JSON and written alongside the call log at `logs/reports/{job_name
 All raised exceptions inherit from `UsaiHarnessError`.
 
 - `ConfigurationError`: Invalid configuration or parameters. Caught at init.
-- `AuthenticationError`: HTTP 401 or 403 from the provider. Raised by `complete()` or `batch()`. Preserves checkpoint.
+- `AuthenticationError`: HTTP 401 or 403 from the provider. Raised by `complete()` or `batch()`. Preserves checkpoint. Provider endpoints differ in which HTTP status they return for an invalid API key. USAi returns 401 or 403, both of which raise `AuthenticationError` and halt the worker pool. Gemini's OpenAI-compat endpoint returns 400 with a structured error body, which the harness treats as a per-call non-retryable failure rather than an auth halt. See `docs/ops-guide.md` section 7.1 for the operational implications and the recommended pre-flight mitigation.
 - `TransportError`: Network failure, DNS issue, TLS error, or provider error not covered by retry.
 - `RateLimitError`: Sustained rate-limit failure after adaptive backoff exhausts. Rare; usually indicates a misconfiguration or provider outage.
 - `ModelNotFoundError`: Requested model is not in the provider's current catalog. Run `discover-models` to refresh.
