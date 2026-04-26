@@ -61,6 +61,28 @@ def test_log_call_missing_required_field_raises(tmp_path):
         log.close()
 
 
+def test_log_entry_includes_error_body_when_present(tmp_path):
+    log = CallLogger(log_dir=tmp_path, job_id="J1", project="p")
+    log.log_call(_base_call(
+        status_code=400,
+        error_body='{"error":{"message":"API key not valid"}}',
+    ))
+    log.close()
+
+    entry = json.loads(log.get_log_path().read_text().splitlines()[0])
+    assert "error_body" in entry
+    assert "API key not valid" in entry["error_body"]
+
+
+def test_log_entry_omits_error_body_when_none(tmp_path):
+    log = CallLogger(log_dir=tmp_path, job_id="J1", project="p")
+    log.log_call(_base_call(error_body=None))
+    log.close()
+
+    entry = json.loads(log.get_log_path().read_text().splitlines()[0])
+    assert "error_body" not in entry
+
+
 def test_multiple_entries(tmp_path):
     log = CallLogger(log_dir=tmp_path, job_id="J1", project="p")
     for i in range(5):

@@ -35,6 +35,9 @@ DEFAULT_WORKERS = 3
 DEFAULT_BATCH_SIZE = 50
 MAX_WORKERS = 10
 
+DEFAULT_ERROR_BODY_SNIPPET_MAX_CHARS = 200
+MAX_ERROR_BODY_SNIPPET_MAX_CHARS = 2000
+
 _KNOWN_PROJECT_FIELDS = frozenset({
     "model", "temperature", "max_tokens",
     "system_prompt", "workers", "batch_size",
@@ -143,6 +146,21 @@ class ConfigLoader:
             raise ConfigValidationError(
                 f"Invalid {self.models_config_path}: expected top-level 'models' mapping."
             )
+
+        snippet_raw = raw.get(
+            "error_body_snippet_max_chars", DEFAULT_ERROR_BODY_SNIPPET_MAX_CHARS
+        )
+        if isinstance(snippet_raw, bool) or not isinstance(snippet_raw, int):
+            raise ConfigValidationError(
+                f"error_body_snippet_max_chars in {self.models_config_path} "
+                f"must be a positive integer; got {snippet_raw!r}."
+            )
+        if snippet_raw < 1 or snippet_raw > MAX_ERROR_BODY_SNIPPET_MAX_CHARS:
+            raise ConfigValidationError(
+                f"error_body_snippet_max_chars={snippet_raw} out of range. "
+                f"Must be 1..{MAX_ERROR_BODY_SNIPPET_MAX_CHARS}."
+            )
+        self.error_body_snippet_max_chars: int = snippet_raw
 
         self._models: dict[str, ModelConfig] = {}
         for name, spec in raw["models"].items():

@@ -48,3 +48,9 @@ A misconfigured TLS verify setting is visible rather than silent, so it gets cau
 Users retain control. Each default can be overridden when the situation requires it, but overrides are explicit choices, not accidents.
 
 The `usai-harness audit` CLI subcommand (referenced in the SRS) checks gitignore coverage, scans for accidentally tracked secrets, and runs `pip-audit` against the current environment. It is the operational counterpart to these defaults: defaults prevent the common mistakes, the audit command catches the rest.
+
+## Amendment, 2026-04-25 — Error body snippet logging
+
+The original "log only what is needed" stance dropped non-2xx response bodies entirely. Task 04 made this conservative on the assumption that body content might leak credentials and that the redaction module had not been validated against real provider output. The Task 08 Gemini smoke test exercised boundary-enforced redaction in `redaction.py` against a real OpenAI-compat endpoint and confirmed that Bearer headers and provider-shaped key strings are scrubbed before any output reaches disk.
+
+Task 10 reverses the body-drop. The transport now captures up to `error_body_snippet_max_chars` characters of the response body on non-2xx, passes the truncated text through `redact_secrets()`, and writes the result to the call log under `error_body`. Default is 200 characters; the cap is configurable up to 2000 via `configs/models.yaml`. Diagnostic value is high: Gemini's HTTP 400 on invalid keys carries the only useful information in the body, and the prior behavior dropped that signal silently. The change does not weaken the security posture because redaction now runs at every output boundary; future contributors who consider reverting this should first prove the redaction surface has regressed.

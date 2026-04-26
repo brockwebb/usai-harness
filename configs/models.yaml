@@ -4,6 +4,11 @@
 # cost rates for known IDs. Entries matching the live catalog are merged;
 # IDs not present in the live catalog are ignored.
 
+# Maximum characters of a non-2xx response body that the transport captures,
+# redacts, and writes to the call log under `error_body`. Range: 1..2000.
+# Validated by config.py at load time.
+error_body_snippet_max_chars: 200
+
 providers:
   usai:
     base_url: https://your-agency-endpoint.usai.gov/api/v1

@@ -104,9 +104,12 @@ class USAiClient:
         if transport is not None:
             self._transport = transport
         else:
-            self._transport = get_transport(
-                transport_backend, **(transport_kwargs or {})
+            tk = dict(transport_kwargs or {})
+            tk.setdefault(
+                "error_body_snippet_max_chars",
+                self._loader.error_body_snippet_max_chars,
             )
+            self._transport = get_transport(transport_backend, **tk)
 
         # 4. Rate Limiter (shared across all workers)
         self._rate_limiter = RateLimiter()
@@ -335,11 +338,16 @@ class USAiClient:
     ) -> None:
         usage = {}
         model_returned = None
+        error_body = None
         if isinstance(response, dict):
             u = response.get("usage")
             if isinstance(u, dict):
                 usage = u
             model_returned = response.get("model")
+            if not success:
+                snippet = response.get("error_body")
+                if isinstance(snippet, str) and snippet:
+                    error_body = snippet
 
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -352,6 +360,7 @@ class USAiClient:
             "completion_tokens": usage.get("completion_tokens"),
             "total_tokens": usage.get("total_tokens"),
             "error": error,
+            "error_body": error_body,
             "success": success,
         }
         if log_content:
@@ -369,6 +378,11 @@ class USAiClient:
         response = result.response if isinstance(result.response, dict) else {}
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
         model_returned = response.get("model") if isinstance(response, dict) else None
+        error_body = None
+        if not result.success:
+            snippet = response.get("error_body")
+            if isinstance(snippet, str) and snippet:
+                error_body = snippet
 
         entry = {
             "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -381,6 +395,7 @@ class USAiClient:
             "completion_tokens": usage.get("completion_tokens"),
             "total_tokens": usage.get("total_tokens"),
             "error": result.error,
+            "error_body": error_body,
             "success": result.success,
         }
         if log_content:

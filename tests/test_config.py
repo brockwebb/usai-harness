@@ -653,3 +653,63 @@ def test_apply_live_catalog_warns_on_dropped_models(live_catalog, caplog):
     assert str(catalog_path) in msg
     # At least one of the dropped repo IDs must appear.
     assert "claude-sonnet-4-5-20241022" in msg
+
+
+# ---------- error_body_snippet_max_chars (Task 10) ------------------------
+
+
+def test_error_body_snippet_max_chars_default(tmp_path):
+    yaml_body = (
+        """
+        providers:
+          usai:
+            base_url: https://example.com/v1
+            api_key_env: USAI_API_KEY
+        """
+        + _MINIMAL_MODEL_BLOCK
+    )
+    path = _write_models_yaml(tmp_path, yaml_body)
+    loader = ConfigLoader(models_config_path=path)
+    assert loader.error_body_snippet_max_chars == 200
+
+
+_BASE_PROVIDER_BLOCK = """
+providers:
+  usai:
+    base_url: https://example.com/v1
+    api_key_env: USAI_API_KEY
+"""
+
+
+def test_error_body_snippet_max_chars_override(tmp_path):
+    yaml_body = (
+        "error_body_snippet_max_chars: 500\n"
+        + _BASE_PROVIDER_BLOCK
+        + _MINIMAL_MODEL_BLOCK
+    )
+    path = _write_models_yaml(tmp_path, yaml_body)
+    loader = ConfigLoader(models_config_path=path)
+    assert loader.error_body_snippet_max_chars == 500
+
+
+@pytest.mark.parametrize("bad", [0, -5, 5000])
+def test_error_body_snippet_max_chars_validation(tmp_path, bad):
+    yaml_body = (
+        f"error_body_snippet_max_chars: {bad}\n"
+        + _BASE_PROVIDER_BLOCK
+        + _MINIMAL_MODEL_BLOCK
+    )
+    path = _write_models_yaml(tmp_path, yaml_body)
+    with pytest.raises(ConfigValidationError, match="error_body_snippet_max_chars"):
+        ConfigLoader(models_config_path=path)
+
+
+def test_error_body_snippet_max_chars_non_integer_raises(tmp_path):
+    yaml_body = (
+        'error_body_snippet_max_chars: "two hundred"\n'
+        + _BASE_PROVIDER_BLOCK
+        + _MINIMAL_MODEL_BLOCK
+    )
+    path = _write_models_yaml(tmp_path, yaml_body)
+    with pytest.raises(ConfigValidationError, match="positive integer"):
+        ConfigLoader(models_config_path=path)

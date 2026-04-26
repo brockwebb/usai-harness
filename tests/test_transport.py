@@ -86,7 +86,7 @@ async def test_httpx_transport_returns_error_status():
         await t.close()
 
     assert status == 429
-    assert "rate limited" in resp["error"]
+    assert "rate limited" in resp["error_body"]
 
 
 async def test_httpx_transport_connection_error_raises():
@@ -304,5 +304,119 @@ async def test_error_body_is_redacted():
         await t.close()
 
     assert status == 401
-    assert "abc123def456ghi789" not in body["error"]
-    assert "REDACTED" in body["error"]
+    assert "abc123def456ghi789" not in body["error_body"]
+    assert "REDACTED" in body["error_body"]
+
+
+# ---------- error_body snippet (Task 10) ----------------------------------
+
+
+async def test_error_body_snippet_captured_on_non_2xx():
+    def handler(request):
+        return httpx.Response(
+            400,
+            json={"error": {"message": "API key not valid. Please pass a valid API key."}},
+        )
+
+    t = HttpxTransport(transport=_mock_httpx(handler))
+    try:
+        body, status = await t.send(
+            base_url="https://example.com/v1", api_key="K",
+            model="m", messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+
+    assert status == 400
+    assert "API key not valid" in body["error_body"]
+
+
+async def test_error_body_snippet_redacted():
+    # Use an OpenAI-style sk- prefix; the redactor recognizes it.
+    fake_key = "sk-FAKE_TEST_KEY_NOT_REAL_XXXXXXXXXX"
+    def handler(request):
+        return httpx.Response(
+            401,
+            json={"error": {"message": f"Bearer {fake_key} rejected"}},
+        )
+
+    t = HttpxTransport(transport=_mock_httpx(handler))
+    try:
+        body, status = await t.send(
+            base_url="https://example.com/v1", api_key="K",
+            model="m", messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+
+    assert status == 401
+    # The literal fake-key string must not appear in the snippet.
+    assert fake_key not in body["error_body"]
+    assert "REDACTED" in body["error_body"]
+
+
+async def test_error_body_snippet_truncated_to_limit():
+    big_payload = "x" * 5000
+    def handler(request):
+        return httpx.Response(500, text=big_payload)
+
+    t = HttpxTransport(
+        transport=_mock_httpx(handler),
+        error_body_snippet_max_chars=200,
+    )
+    try:
+        body, status = await t.send(
+            base_url="https://example.com/v1", api_key="K",
+            model="m", messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+
+    assert status == 500
+    assert len(body["error_body"]) == 200
+
+
+async def test_error_body_omitted_for_binary_content_type():
+    def handler(request):
+        return httpx.Response(
+            502,
+            content=b"\x89PNG\r\n\x1a\n",
+            headers={"content-type": "application/octet-stream"},
+        )
+
+    t = HttpxTransport(transport=_mock_httpx(handler))
+    try:
+        body, status = await t.send(
+            base_url="https://example.com/v1", api_key="K",
+            model="m", messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+
+    assert status == 502
+    assert "error_body" not in body
+
+
+async def test_error_body_capture_failure_is_silent(monkeypatch):
+    """If reading response.text raises, return body without error_body, don't escalate."""
+    def handler(request):
+        return httpx.Response(503, text="ok")
+
+    t = HttpxTransport(transport=_mock_httpx(handler))
+
+    class _Boom:
+        def __get__(self, obj, objtype=None):
+            raise RuntimeError("simulated read failure")
+
+    monkeypatch.setattr(httpx.Response, "text", _Boom())
+
+    try:
+        body, status = await t.send(
+            base_url="https://example.com/v1", api_key="K",
+            model="m", messages=[{"role": "user", "content": "hi"}],
+        )
+    finally:
+        await t.close()
+
+    assert status == 503
+    assert "error_body" not in body
