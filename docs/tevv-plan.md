@@ -1,8 +1,8 @@
 # Test, Evaluation, Verification, and Validation Plan — usai-harness
 
-**Version:** 1.1
-**Date:** 2026-04-25
-**Status:** Audited (Tasks 06-10 reflected; integration suite written, not yet run against live USAi)
+**Version:** 1.2
+**Date:** 2026-04-26
+**Status:** Audited (Tasks 06-14 reflected; CI workflow live)
 
 ## 1. Purpose
 
@@ -99,12 +99,12 @@ Security tests verify SEC requirements and NFR-S quality attributes.
 | SEC-003 TLS verification | `test_transport.py::test_tls_verify_disabled_warns_per_call` and `test_tls_verify_default_silent`. | M-1 |
 | SEC-004 no secrets in config files | Inspect `configs/models.yaml` schema; `audit` regex flags any tracked-file leak. | M-3 |
 | SEC-005 gitignore coverage | `test_audit.py::test_gitignore_*`. | M-1 |
-| SEC-006 hash-pinned install | `test_repo_hygiene.py::test_requirements_lock_*` plus `pip install -r requirements.lock --require-hashes` in a clean env. | M-1, M-4 (CI job pending) |
+| SEC-006 hash-pinned install | `test_repo_hygiene.py::test_requirements_lock_*` plus `.github/workflows/ci.yml` `lockfile_install` job. | M-1, M-4 |
 | NFR-S-001 no secrets at rest | `test_redaction.py::*`, transport error-body redaction tests, integration runner step 7. | M-1 (primary), M-2 (live) |
 | NFR-S-002 .gitignore coverage | `test_audit.py::test_gitignore_*`. | M-1 |
 | NFR-S-003 YAML attack surface | Attempt YAML with `!!python/object` constructor, verify rejection. | M-1 |
-| NFR-S-004 dependency auditability | Run `pip-audit` in CI (CI workflow not yet present; deferred). | M-4 |
-| NFR-S-005 lockfile install | `pip install -r requirements.lock --require-hashes` in a clean env (CI workflow not yet present; deferred). | M-4 |
+| NFR-S-004 dependency auditability | `.github/workflows/ci.yml` `audit` job runs `pip-audit` advisory-only with findings written to the job summary on every push. | M-4 |
+| NFR-S-005 lockfile install | `.github/workflows/ci.yml` `lockfile_install` job verifies `pip install --require-hashes -r requirements.lock` plus a hard-deps-only smoke import. | M-4 |
 
 ### 4.4 Performance Tests
 

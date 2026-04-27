@@ -1,8 +1,8 @@
 # Requirements Traceability Matrix — usai-harness
 
-**Version:** 1.1
-**Date:** 2026-04-25
-**Status:** Audited (Tasks 06-10 reflected; baseline gaps closed)
+**Version:** 1.2
+**Date:** 2026-04-26
+**Status:** Audited (Tasks 06-14 reflected; CI gaps closed)
 
 ## 1. Purpose
 
@@ -169,16 +169,16 @@ A requirement without an implementation is not yet built. A requirement without 
 | NFR-S-001 | Key-pattern grep across all output files | CI test output | M-1, M-2 | Implemented |
 | NFR-S-002 | `.gitignore` coverage test + audit command | `test_audit.py::test_gitignore_all_present_passes`, `test_audit.py::test_gitignore_missing_reports`, `test_audit.py::test_gitignore_missing_fix_appends` | M-1, M-4 | Implemented |
 | NFR-S-003 | `!!python/object` YAML rejection | `test_config.py::test_unsafe_yaml_rejected` | M-1 | Implemented |
-| NFR-S-004 | `pip-audit` in CI | CI job output | M-4 | Planned |
-| NFR-S-005 | Install-from-lockfile CI job | CI job output | M-4 | Planned |
+| NFR-S-004 | `pip-audit` in CI | `.github/workflows/ci.yml` `audit` job (advisory, soft-fail with findings to job summary) | M-4 | Implemented |
+| NFR-S-005 | Install-from-lockfile CI job | `.github/workflows/ci.yml` `lockfile_install` job | M-4 | Implemented |
 
 ### 6.4 Portability
 
 | ID | Verification | Evidence | Method | Status |
 |----|--------------|----------|--------|--------|
-| NFR-PO-001 | CI matrix on Python 3.12, 3.13, 3.14 | CI output | M-1 | Planned |
-| NFR-PO-002 | CI matrix on Linux, macOS, Windows | CI output | M-1 | Planned |
-| NFR-PO-003 | Three-deps-only install test | CI job: install with only hard deps | M-4 | Planned |
+| NFR-PO-001 | CI matrix on Python 3.12, 3.13, 3.14 | `.github/workflows/ci.yml` `test` job matrix | M-1 | Implemented |
+| NFR-PO-002 | CI matrix on Linux, macOS, Windows | `.github/workflows/ci.yml` `test` job matrix | M-1 | Implemented |
+| NFR-PO-003 | Three-deps-only install test | `.github/workflows/ci.yml` `lockfile_install` job (hard deps via `--require-hashes`, harness via `--no-deps`) | M-4 | Implemented |
 | NFR-PO-004 | Multi-provider integration tests | `tests/integration/results/{ts}/providers.json` | M-2 | Planned |
 
 ### 6.5 Maintainability
@@ -208,11 +208,11 @@ A requirement without an implementation is not yet built. A requirement without 
 | Interface (IR) | 5 | 5 | 0 | 0 |
 | NFR Performance | 3 | 0 | 3 | 0 |
 | NFR Reliability | 4 | 0 | 4 | 0 |
-| NFR Security | 5 | 3 | 2 | 0 |
-| NFR Portability | 4 | 0 | 4 | 0 |
+| NFR Security | 5 | 5 | 0 | 0 |
+| NFR Portability | 4 | 3 | 1 | 0 |
 | NFR Maintainability | 5 | 3 | 2 | 0 |
 | NFR Usability | 3 | 0 | 3 | 0 |
-| **Total** | **78** | **59** | **19** | **0** |
+| **Total** | **78** | **64** | **14** | **0** |
 
 Status definitions:
 
@@ -224,15 +224,16 @@ Status definitions:
 
 The four baseline gaps documented at v1.0 (FR-009a resolution order, FR-010 reactive auth, FR-036–FR-041 setup CLIs, FR-040 endpoint-authoritative models) were closed in the alignment sweep landed across CC Tasks 01 through 05 (commits `77d1184` through `8ed31c6`).
 
-What remains as Planned at the time of this audit is work gated on either a live USAi endpoint key or CI infrastructure that has not yet been set up. None of these blocks any user-facing functionality.
+What remains as Planned at the time of this audit is work gated on a live USAi endpoint key or pending review tasks. None of these blocks any user-facing functionality.
 
 1. **FR-014 (LiteLLMTransport).** The transport stub exists and raises `NotImplementedError`. Full implementation is intentionally deferred per ADR-001 until the LiteLLM optional path is exercised against a real provider need.
 2. **NFR Performance row (P-001 through P-003).** Throughput and overhead measurements require a live endpoint with a key budget and a stable test window.
 3. **NFR Reliability row (R-001 through R-004).** Injected-failure scenarios require live-endpoint orchestration; the unit tests cover the harness behavior but not the end-to-end recovery story.
-4. **NFR Security S-004 (pip-audit in CI) and S-005 (lockfile install in CI).** No `.github/workflows/` directory exists yet; both depend on a CI workflow being added.
-5. **NFR Portability row (PO-001 through PO-004).** Multi-version, multi-OS, and multi-provider verification all need CI matrix runs that have not yet been wired up.
-6. **NFR Maintainability M-004 (add-provider walkthrough) and M-005 (CHANGELOG discipline).** M-004 is documentation-only; M-005 depends on `CHANGELOG.md` being kept current PR-by-PR going forward.
-7. **NFR Usability row (U-001 through U-003).** Error-path and `--help` reviews are pending; the `--help` substance is verified indirectly by the CLI dispatcher tests in `test_cli.py`.
+4. **NFR Portability PO-004 (multi-provider integration tests).** The Gemini smoke run (Task 08) covered one non-USAi provider; broader matrix coverage is gated on additional provider keys.
+5. **NFR Maintainability M-004 (add-provider walkthrough) and M-005 (CHANGELOG discipline).** M-004 is documentation-only; M-005 depends on `CHANGELOG.md` being kept current PR-by-PR going forward.
+6. **NFR Usability row (U-001 through U-003).** Error-path and `--help` reviews are pending; the `--help` substance is verified indirectly by the CLI dispatcher tests in `test_cli.py`.
+
+CI infrastructure (NFR-S-004, NFR-S-005, NFR-PO-001, NFR-PO-002, NFR-PO-003) was added in Task 14 (`.github/workflows/ci.yml`); first green run on `feat/ci-workflow` covered all 9 test-matrix cells plus the audit and lockfile-install jobs.
 
 ## 9. Maintenance
 
