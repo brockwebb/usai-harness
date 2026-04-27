@@ -558,9 +558,8 @@ def test_provider_with_neither_field_raises(tmp_path):
         ConfigLoader(models_config_path=path)
 
 
-def test_secret_map_falls_back_to_env_with_deprecation(tmp_path):
-    """api_key_env on Azure backend works once but warns."""
-    import warnings as _w
+def test_secret_map_requires_api_key_secret_for_azure(tmp_path):
+    """Azure backend rejects api_key_env-only providers; ConfigValidationError, no warning."""
     yaml_body = """
         providers:
           usai:
@@ -582,18 +581,15 @@ def test_secret_map_falls_back_to_env_with_deprecation(tmp_path):
     path.write_text(textwrap.dedent(yaml_body).lstrip())
     loader = ConfigLoader(models_config_path=path)
 
-    with _w.catch_warnings(record=True) as caught:
-        _w.simplefilter("always")
-        m = loader.providers_to_secret_map()
-    assert m == {"usai": "USAI_API_KEY"}
-    deprecation = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert deprecation, "expected DeprecationWarning"
-    assert "api_key_secret" in str(deprecation[0].message)
+    with pytest.raises(ConfigValidationError) as exc:
+        loader.providers_to_secret_map()
+    msg = str(exc.value)
+    assert "api_key_secret" in msg
+    assert "usai" in msg
 
 
-def test_secret_map_prefers_secret_when_both_set(tmp_path):
-    """api_key_secret wins over api_key_env when both are present."""
-    import warnings as _w
+def test_secret_map_uses_secret_when_both_set(tmp_path):
+    """api_key_secret is the only field consulted; api_key_env is ignored silently."""
     yaml_body = """
         providers:
           usai:
@@ -616,13 +612,7 @@ def test_secret_map_prefers_secret_when_both_set(tmp_path):
     path.write_text(textwrap.dedent(yaml_body).lstrip())
     loader = ConfigLoader(models_config_path=path)
 
-    with _w.catch_warnings(record=True) as caught:
-        _w.simplefilter("always")
-        m = loader.providers_to_secret_map()
-    assert m == {"usai": "usai-vault-secret"}
-    # No deprecation when secret is present.
-    deprecation = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert not deprecation
+    assert loader.providers_to_secret_map() == {"usai": "usai-vault-secret"}
 
 
 def test_apply_live_catalog_warns_on_dropped_models(live_catalog, caplog):

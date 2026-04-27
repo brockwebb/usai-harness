@@ -174,7 +174,7 @@ models:
 
 - `base_url` (required): Root URL of the provider. The harness appends `/chat/completions` and `/models` to the configured base URL as needed; the path prefix (such as `/api/v1` or `/v1beta/openai`) belongs in `base_url`.
 - `api_key_env` (one of two credential references): Name of the environment variable or `.env` key that holds the API key for this provider. Required for `dotenv` and `env_var` credential backends.
-- `api_key_secret` (one of two credential references): Name of the secret in the configured Key Vault. Required for the `azure_keyvault` credential backend. For Azure backends, `api_key_env` is accepted as a deprecated fallback in 0.1.x (with `DeprecationWarning`); removal target 0.2.0.
+- `api_key_secret` (one of two credential references): Name of the secret in the configured Key Vault. Required for the `azure_keyvault` credential backend. An Azure provider entry that omits `api_key_secret` raises `ConfigValidationError` at load; `api_key_env` is not accepted as a synonym.
 - `rate` (optional): Rate-limit parameters. Defaults to 2.8/sec refill with burst 3.
 - `default_model` (optional): Model to use when a call does not specify one.
 
@@ -354,7 +354,7 @@ For `DotEnvProvider` and `EnvVarProvider`, set `api_key_env` to the environment 
 
 For `AzureKeyVaultProvider`, set `api_key_secret` to the secret name in the configured Key Vault. The provider's `vault_url` selects which vault.
 
-A provider entry may set both fields. The active credentials backend determines which is read. For the Azure backend, `api_key_env` is accepted as a deprecated fallback in 0.1.x and emits a `DeprecationWarning` at config load. Removal target is 0.2.0. Migration: rename `api_key_env` to `api_key_secret` in `providers:` entries that point at Azure-backed credentials.
+A provider entry may set both fields. The active credentials backend determines which is read. The Azure backend strictly requires `api_key_secret`; an Azure provider that only declares `api_key_env` raises `ConfigValidationError`. The previous deprecation-window fallback was removed.
 
 **To add a new backend:**
 

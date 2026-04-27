@@ -21,6 +21,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - API reference Section 5.1 shows a failed-call example with `error_body`.
 - API reference Section 6 cross-references the per-provider auth-failure divergence.
 
+### Removed
+- `api_key_env` fallback on `azure_keyvault` credential providers. Use `api_key_secret` instead. Previously emitted a `DeprecationWarning`; now raises `ConfigError`.
+
 ### Changed
 - Engineering documentation spine (`docs/srs.md`, `docs/rtm.md`, `docs/nfr.md`, `docs/architecture.md`, `docs/tevv-plan.md`) brought current with the alignment sweep and Tasks 06 through 10. RTM Section 8 repurposed from baseline-gaps to current-remaining-work; coverage summary recomputed after FR-042 and IR-005 additions.
 - ADR-007 amended to document the reversal of the original Task 04 conservative decision to drop error response bodies. Boundary-enforced redaction validated by Task 08 Gemini smoke test now makes diagnostic body capture safe.

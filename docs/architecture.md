@@ -89,7 +89,7 @@ Defines the `CredentialProvider` protocol and ships three implementations:
 
 - `DotEnvProvider` reads from `.env`. Resolution order is project-local `.env`, then user-level `.env` in the per-user configuration directory, then OS environment variables. The user-level location is `~/.config/usai-harness/.env` on Linux and macOS, and `%APPDATA%\usai-harness\.env` on Windows. One rotation of the user-level file propagates to every project using the harness on that machine. The provider names the environment variable to read via `api_key_env` in the `providers:` block.
 - `EnvVarProvider` reads from OS environment variables directly. Suited to CI, containers, and orchestrator-managed environments. Uses `api_key_env` in the same way as `DotEnvProvider`.
-- `AzureKeyVaultProvider` reads from Azure Key Vault (optional install). Names a Key Vault secret via `api_key_secret` in the `providers:` block. Accepts `api_key_env` as a deprecated fallback in 0.1.x with a `DeprecationWarning`; removal target 0.2.0 (ADR-009 amendment).
+- `AzureKeyVaultProvider` reads from Azure Key Vault (optional install). Names a Key Vault secret via `api_key_secret` in the `providers:` block. An Azure provider entry that omits `api_key_secret` raises `ConfigValidationError` at load; `api_key_env` is not accepted as a synonym (ADR-009 amendment, fallback removed).
 
 The protocol exposes one method: `get_key(provider: str) -> str`. Providers do not track expiry or freshness. Authentication validity is determined by endpoint response (ADR-002).
 

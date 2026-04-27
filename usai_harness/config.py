@@ -73,8 +73,9 @@ class ProviderConfig:
     `api_key_env` names an OS environment variable for DotEnv/EnvVar backends.
     `api_key_secret` names a Key Vault secret for the Azure backend. The two
     fields are scoped per backend; a provider entry that supports multiple
-    backends can populate both. For the Azure backend, `api_key_env` is
-    accepted as a deprecated fallback and removed in 0.2.0.
+    backends can populate both. The Azure backend strictly requires
+    `api_key_secret`; an Azure provider entry that only sets `api_key_env`
+    raises `ConfigValidationError`.
     """
     name: str
     base_url: str
@@ -373,33 +374,20 @@ class ConfigLoader:
     def providers_to_secret_map(self) -> dict[str, str]:
         """Return {provider_name: secret_name} for the Azure Key Vault backend.
 
-        Each provider must define `api_key_secret`. A provider that defines
-        only `api_key_env` is accepted with a `DeprecationWarning` (per Task 07
-        migration plan; the fallback is removed in 0.2.0). A provider with
-        neither raises ConfigValidationError.
+        Every provider must define `api_key_secret`. A provider that lacks it
+        raises `ConfigValidationError`; the previous fallback to `api_key_env`
+        was removed when the deprecation window closed.
         """
-        import warnings as _warnings
-
         out: dict[str, str] = {}
         for name, cfg in self._providers.items():
-            if cfg.api_key_secret:
-                out[name] = cfg.api_key_secret
-                continue
-            if cfg.api_key_env:
-                _warnings.warn(
-                    f"Provider '{name}' uses 'api_key_env' for the Azure Key "
-                    "Vault backend; this is deprecated and will be removed in "
-                    "0.2.0. Rename to 'api_key_secret' (a Key Vault secret "
-                    "name, not an environment variable).",
-                    DeprecationWarning,
-                    stacklevel=2,
+            if not cfg.api_key_secret:
+                raise ConfigValidationError(
+                    f"Provider '{name}' has no 'api_key_secret'. The Azure "
+                    f"Key Vault backend requires a Key Vault secret name; "
+                    f"'api_key_env' is not accepted as a synonym. Update the "
+                    f"'providers:' block in your models.yaml."
                 )
-                out[name] = cfg.api_key_env
-                continue
-            raise ConfigValidationError(
-                f"Provider '{name}' has neither 'api_key_secret' nor "
-                f"'api_key_env'. The Azure Key Vault backend needs a secret name."
-            )
+            out[name] = cfg.api_key_secret
         return out
 
     def get_default_model(self) -> ModelConfig:

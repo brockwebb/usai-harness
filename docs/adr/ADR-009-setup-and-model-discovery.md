@@ -71,6 +71,10 @@ The `audit` command from ADR-007 and the setup commands from this ADR together f
 
 Implementation note (not a new architectural decision): the `providers:` block carries one credential reference per entry. For the `dotenv` and `env_var` backends, that reference is `api_key_env`, naming an environment variable. For the `azure_keyvault` backend, it is `api_key_secret`, naming a Key Vault secret. A provider entry may set both when it supports multiple backends.
 
-The original implementation overloaded `api_key_env` for both meanings; the field name lied for the Azure case. This was caught early and corrected. To preserve existing user catalogs, the Azure backend accepts `api_key_env` as a deprecated fallback in 0.1.x with a `DeprecationWarning` directing users to rename. The fallback is removed in 0.2.0.
+The original implementation overloaded `api_key_env` for both meanings; the field name lied for the Azure case. This was caught early and corrected. To preserve existing user catalogs during the transition, the Azure backend briefly accepted `api_key_env` as a fallback in 0.1.x with a `DeprecationWarning` directing users to rename.
 
 The architectural decision recorded above is unchanged. The endpoint remains authoritative for model identity; backends still differ only by where they fetch the credential from.
+
+### Follow-up, 2026-04-27
+
+The `api_key_env` fallback for `azure_keyvault` providers has been removed. An Azure provider entry that omits `api_key_secret` raises `ConfigValidationError` at load. The deprecation window served its purpose during the 0.1.x transition; carrying the fallback into 0.2.0 would have invited the original confusion to drift back in.
