@@ -35,17 +35,11 @@ You will be prompted for:
 
 1. Provider name (press Enter to accept `usai` as default)
 2. Base URL for the provider (find it in the USAi console under the API tab)
-3. API key (will not echo to the terminal)
+3. API key (echoed as `*` while typing; a `Key saved: ****<last4>` confirmation prints after capture)
 
-The base URL must include the API path prefix up to but not including `/chat/completions`. Examples:
+Paste the base URL exactly as the provider documents it. The harness auto-detects the API path prefix during setup by probing `/api/v1`, then `/v1`, then the bare URL; whichever returns a successful `/models` response wins, and that resolved URL is what gets stored. If you paste a URL that already includes the prefix, the bare-prefix probe matches and the URL is stored unchanged.
 
-- USAi: `https://hostname/api/v1`
-- OpenAI / OpenAI-compatible: `https://hostname/v1`
-- Gemini OpenAI-compat: `https://generativelanguage.googleapis.com/v1beta/openai`
-
-The harness appends `/chat/completions` and `/models` to whatever you provide. If you supply only the hostname, model discovery and completion calls will both 404.
-
-The command will write your credentials to the user-level config directory, fetch the live model list from the endpoint, and run a test call to confirm everything works. On success you see the list of available models and a sample response. If model discovery is unavailable (the endpoint is reachable but `/models` returns 404, or the network is down), `init` warns, prompts you for a default model ID to use, and writes credentials anyway so you are not stuck. Run `usai-harness discover-models` later to populate the catalog when the endpoint is reachable.
+The command writes your credentials to the user-level config directory, fetches the live model list from the resolved URL, and runs a test call to confirm everything works. On success you see the detected URL, the list of available models, and a sample response. If every probe fails (the endpoint is unreachable, or none of the probed prefixes return 200), `init` warns, prompts you for a default model ID, and writes credentials anyway so you are not stuck. Run `usai-harness discover-models` later to populate the catalog when the endpoint is reachable.
 
 Re-running `init` is safe. It does not accumulate state.
 

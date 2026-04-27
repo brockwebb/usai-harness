@@ -47,15 +47,41 @@ def _getpass_const(val):
     return lambda _msg: val
 
 
+def _probe_aware_fetch(accepted_url: str, models=None):
+    """Build a fake _fetch_models that returns 200 only for the accepted URL.
+
+    Other URLs raise httpx.HTTPStatusError(404), which is what
+    `_probe_path_prefix` expects to advance to the next candidate.
+    """
+    payload = ["m1"] if models is None else list(models)
+    accepted_clean = accepted_url.rstrip("/")
+
+    def fn(base_url, api_key):
+        if base_url.rstrip("/") == accepted_clean:
+            return list(payload)
+        raise httpx.HTTPStatusError(
+            "404",
+            request=httpx.Request("GET", base_url),
+            response=httpx.Response(404),
+        )
+
+    return fn
+
+
 # ---------- handle_init ---------------------------------------------------
 
 
 def test_init_happy_path(tmp_path, monkeypatch, capsys):
+    """User pastes bare hostname; probe detects /api/v1; resolved URL is stored."""
     fetched = []
+    accepted = "https://example.com/api/v1"
+    base_fetch = _probe_aware_fetch(
+        accepted, models=["m-alpha", "m-beta", "m-gamma"],
+    )
 
     def fake_fetch(base_url, api_key):
         fetched.append((base_url, api_key))
-        return ["m-alpha", "m-beta", "m-gamma"]
+        return base_fetch(base_url, api_key)
 
     completions = []
 
@@ -64,7 +90,7 @@ def test_init_happy_path(tmp_path, monkeypatch, capsys):
         return True
 
     rc = setup_commands.handle_init(
-        prompt_fn=_prompt_sequence("usai", "https://example.com/v1"),
+        prompt_fn=_prompt_sequence("usai", "https://example.com"),
         getpass_fn=_getpass_const("the-secret-key"),
         fetch_models_fn=fake_fetch,
         test_completion_fn=fake_test,
@@ -76,9 +102,11 @@ def test_init_happy_path(tmp_path, monkeypatch, capsys):
     assert env_path.read_text().strip() == "USAI_API_KEY=the-secret-key"
     catalog = yaml.safe_load(catalog_path.read_text())
     assert "usai" in catalog["providers"]
+    assert catalog["providers"]["usai"]["base_url"] == accepted
     assert catalog["providers"]["usai"]["models"] == ["m-alpha", "m-beta", "m-gamma"]
-    assert fetched == [("https://example.com/v1", "the-secret-key")]
-    assert completions == [("https://example.com/v1", "the-secret-key", "m-alpha")]
+    # Probe attempts: /api/v1 (success). /v1 and bare not consulted.
+    assert fetched == [(accepted, "the-secret-key")]
+    assert completions == [(accepted, "the-secret-key", "m-alpha")]
 
 
 def test_init_empty_base_url_returns_2():
@@ -137,12 +165,16 @@ def test_init_resilient_to_discovery_failure(tmp_path, capsys):
 
 
 def test_init_resilient_to_empty_model_list(tmp_path, capsys):
+    """Probe accepts the URL (returns 200 with empty list); init prompts for a default."""
     rc = setup_commands.handle_init(
         prompt_fn=_prompt_sequence(
-            "usai", "https://example.com/api/v1", "models/manual-default",
+            "usai", "https://example.com", "models/manual-default",
         ),
         getpass_fn=_getpass_const("k"),
-        fetch_models_fn=lambda *a: [],
+        # 200 + empty list on /api/v1; 404 on the others.
+        fetch_models_fn=_probe_aware_fetch(
+            "https://example.com/api/v1", models=[],
+        ),
         test_completion_fn=lambda *a: True,
     )
     captured = capsys.readouterr()
@@ -151,15 +183,18 @@ def test_init_resilient_to_empty_model_list(tmp_path, capsys):
     assert "no models" in captured.err.lower()
     import yaml as _yaml
     cat = _yaml.safe_load(setup_commands.user_config_models_path().read_text())
+    assert cat["providers"]["usai"]["base_url"] == "https://example.com/api/v1"
     assert cat["providers"]["usai"]["models"] == ["models/manual-default"]
 
 
 def test_init_test_completion_failure_still_writes_creds(tmp_path, capsys):
     """test_completion failure no longer blocks init; warning printed, exit 0."""
     rc = setup_commands.handle_init(
-        prompt_fn=_prompt_sequence("usai", "https://example.com/api/v1"),
+        prompt_fn=_prompt_sequence("usai", "https://example.com"),
         getpass_fn=_getpass_const("k"),
-        fetch_models_fn=lambda *a: ["m1"],
+        fetch_models_fn=_probe_aware_fetch(
+            "https://example.com/api/v1", models=["m1"],
+        ),
         test_completion_fn=lambda *a: False,
     )
     captured = capsys.readouterr()
@@ -173,20 +208,21 @@ def test_init_test_completion_failure_still_writes_creds(tmp_path, capsys):
 
 
 def test_init_idempotent_upsert(tmp_path):
+    accepted = "https://example.com/api/v1"
     # First run
     rc1 = setup_commands.handle_init(
-        prompt_fn=_prompt_sequence("usai", "https://example.com/v1"),
+        prompt_fn=_prompt_sequence("usai", "https://example.com"),
         getpass_fn=_getpass_const("first-key"),
-        fetch_models_fn=lambda *a: ["m1"],
+        fetch_models_fn=_probe_aware_fetch(accepted, models=["m1"]),
         test_completion_fn=lambda *a: True,
     )
     assert rc1 == 0
 
     # Second run with a new key and new model list
     rc2 = setup_commands.handle_init(
-        prompt_fn=_prompt_sequence("usai", "https://example.com/v1"),
+        prompt_fn=_prompt_sequence("usai", "https://example.com"),
         getpass_fn=_getpass_const("second-key"),
-        fetch_models_fn=lambda *a: ["m2", "m3"],
+        fetch_models_fn=_probe_aware_fetch(accepted, models=["m2", "m3"]),
         test_completion_fn=lambda *a: True,
     )
     assert rc2 == 0
@@ -198,6 +234,86 @@ def test_init_idempotent_upsert(tmp_path):
     assert "first-key" not in env_text
     catalog = yaml.safe_load(catalog_path.read_text())
     assert catalog["providers"]["usai"]["models"] == ["m2", "m3"]
+
+
+# ---------- _probe_path_prefix (Task 17) ----------------------------------
+
+
+def test_probe_detects_api_v1_prefix(tmp_path, capsys):
+    """Bare hostname → probe finds /api/v1; resolved URL stored."""
+    accepted = "https://hostname/api/v1"
+    rc = setup_commands.handle_init(
+        prompt_fn=_prompt_sequence("usai", "https://hostname"),
+        getpass_fn=_getpass_const("k"),
+        fetch_models_fn=_probe_aware_fetch(accepted, models=["m1"]),
+        test_completion_fn=lambda *a: True,
+    )
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert f"Detected API at {accepted}" in captured.out
+    cat = yaml.safe_load(setup_commands.user_config_models_path().read_text())
+    assert cat["providers"]["usai"]["base_url"] == accepted
+
+
+def test_probe_detects_v1_prefix_when_api_v1_404s(tmp_path, capsys):
+    """Bare hostname → /api/v1 404s → /v1 wins."""
+    accepted = "https://hostname/v1"
+    rc = setup_commands.handle_init(
+        prompt_fn=_prompt_sequence("usai", "https://hostname"),
+        getpass_fn=_getpass_const("k"),
+        fetch_models_fn=_probe_aware_fetch(accepted, models=["m1"]),
+        test_completion_fn=lambda *a: True,
+    )
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert f"Detected API at {accepted}" in captured.out
+    cat = yaml.safe_load(setup_commands.user_config_models_path().read_text())
+    assert cat["providers"]["usai"]["base_url"] == accepted
+
+
+def test_probe_accepts_bare_when_user_supplied_prefix(tmp_path, capsys):
+    """User-supplied URL already includes /api/v1; bare candidate wins; no double-stack."""
+    user_url = "https://hostname/api/v1"
+    rc = setup_commands.handle_init(
+        prompt_fn=_prompt_sequence("usai", user_url),
+        getpass_fn=_getpass_const("k"),
+        fetch_models_fn=_probe_aware_fetch(user_url, models=["m1"]),
+        test_completion_fn=lambda *a: True,
+    )
+    captured = capsys.readouterr()
+    assert rc == 0
+    # No "Detected API at" line because user_url == resolved_url.
+    assert "Detected API at" not in captured.out
+    cat = yaml.safe_load(setup_commands.user_config_models_path().read_text())
+    assert cat["providers"]["usai"]["base_url"] == user_url
+    # Sanity: no double-stacked /api/v1/api/v1 anywhere in the catalog.
+    assert "/api/v1/api/v1" not in str(cat)
+
+
+def test_probe_all_404_falls_back_to_default_prompt(tmp_path, capsys):
+    """All probe candidates 404 → init warns, prompts for default model, exits 0."""
+    def boom(*a):
+        raise httpx.HTTPStatusError(
+            "404",
+            request=httpx.Request("GET", "https://hostname"),
+            response=httpx.Response(404),
+        )
+
+    rc = setup_commands.handle_init(
+        prompt_fn=_prompt_sequence(
+            "usai", "https://hostname", "models/typed-default",
+        ),
+        getpass_fn=_getpass_const("k"),
+        fetch_models_fn=boom,
+        test_completion_fn=lambda *a: True,
+    )
+    captured = capsys.readouterr()
+    assert rc == 0
+    assert "discovery unavailable" in captured.err.lower()
+    cat = yaml.safe_load(setup_commands.user_config_models_path().read_text())
+    # base_url stored as the user's input (no probe succeeded), without trailing slash.
+    assert cat["providers"]["usai"]["base_url"] == "https://hostname"
+    assert cat["providers"]["usai"]["models"] == ["models/typed-default"]
 
 
 # ---------- _write_env_var ------------------------------------------------

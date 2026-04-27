@@ -201,6 +201,38 @@ def _test_completion(
     return 200 <= resp.status_code < 300
 
 
+def _probe_path_prefix(
+    base_url: str,
+    api_key: str,
+    fetch_fn: Callable[[str, str], list[str]] = _fetch_models,
+) -> Optional[tuple[str, list[str]]]:
+    """Probe common API path prefixes; return (resolved_url, models) on the first 200.
+
+    Tries `/api/v1` (USAi convention), then `/v1` (OpenAI convention), then
+    the bare URL (the user already included a prefix, or the endpoint serves
+    `/models` at root). The first call that returns without raising
+    `httpx.HTTPError` wins. A 200 with an empty model list still counts as
+    success; the probe's job is to identify the correct prefix, not to
+    validate the catalog.
+
+    Returns None when every candidate raises, leaving the caller to fall back
+    (warn, prompt for a default model, save credentials anyway).
+    """
+    base_clean = base_url.rstrip("/")
+    candidates = (
+        base_clean + "/api/v1",
+        base_clean + "/v1",
+        base_clean,
+    )
+    for url in candidates:
+        try:
+            models = fetch_fn(url, api_key)
+        except httpx.HTTPError:
+            continue
+        return url, models
+    return None
+
+
 def handle_init(
     prompt_fn: Callable[[str], str] = input,
     getpass_fn: Callable[[str], str] = _masked_input,
@@ -223,9 +255,7 @@ def handle_init(
 
     provider_name = prompt_fn("Provider name [usai]: ").strip() or "usai"
     base_url = prompt_fn(
-        f"Base URL for {provider_name} (include the API path prefix, "
-        f"e.g. https://hostname/api/v1 for USAi or https://hostname/v1 "
-        f"for OpenAI-compatible): "
+        f"Base URL for {provider_name} (e.g. https://your-endpoint.example.com): "
     ).strip()
     if not base_url:
         print("Base URL is required.", file=sys.stderr)
@@ -241,26 +271,28 @@ def handle_init(
     _write_env_var(env_path, api_key_env, api_key)
     print(f"Key saved: {_mask_for_echo(api_key)}")
 
-    discovery_failed = False
-    discovery_error: Optional[str] = None
-    try:
-        models = fetch_models_fn(base_url, api_key)
-    except httpx.HTTPError as e:
-        discovery_failed = True
-        discovery_error = str(e)
-        models = []
+    user_input_url = base_url.rstrip("/")
+    probe = _probe_path_prefix(user_input_url, api_key, fetch_models_fn)
 
-    if discovery_failed or not models:
-        if discovery_failed:
+    discovery_failed = probe is None
+    if probe is not None:
+        resolved_url, models = probe
+        if resolved_url != user_input_url:
+            print(f"Detected API at {resolved_url}")
+    else:
+        resolved_url = user_input_url
+        models = []
+        print(
+            f"Model discovery unavailable from {user_input_url} "
+            f"(tried /api/v1, /v1, and bare). Skipping catalog population.",
+            file=sys.stderr,
+        )
+
+    if not models:
+        if not discovery_failed:
             print(
-                f"Model discovery unavailable from {base_url}/models "
-                f"({discovery_error}). Skipping catalog population.",
-                file=sys.stderr,
-            )
-        else:
-            print(
-                f"Endpoint reachable but {base_url}/models returned no "
-                f"models. Skipping catalog population.",
+                f"Endpoint reachable at {resolved_url} but /models returned "
+                f"no models. Skipping catalog population.",
                 file=sys.stderr,
             )
         fallback = prompt_fn(
@@ -272,7 +304,7 @@ def handle_init(
     catalog = _load_user_catalog(catalog_path)
     catalog.setdefault("providers", {})
     catalog["providers"][provider_name] = {
-        "base_url": base_url,
+        "base_url": resolved_url,
         "api_key_env": api_key_env,
         "models": models,
     }
@@ -281,7 +313,7 @@ def handle_init(
     test_status: Optional[str] = None
     if models and not discovery_failed:
         test_model = models[0]
-        ok = test_completion_fn(base_url, api_key, test_model)
+        ok = test_completion_fn(resolved_url, api_key, test_model)
         if ok:
             test_status = f"Test completion against {test_model} succeeded"
         else:
