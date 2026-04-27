@@ -135,7 +135,11 @@ def handle_init(
     print()
 
     provider_name = prompt_fn("Provider name [usai]: ").strip() or "usai"
-    base_url = prompt_fn(f"Base URL for {provider_name}: ").strip()
+    base_url = prompt_fn(
+        f"Base URL for {provider_name} (include the API path prefix, "
+        f"e.g. https://hostname/api/v1 for USAi or https://hostname/v1 "
+        f"for OpenAI-compatible): "
+    ).strip()
     if not base_url:
         print("Base URL is required.", file=sys.stderr)
         return 2
@@ -149,11 +153,33 @@ def handle_init(
 
     _write_env_var(env_path, api_key_env, api_key)
 
+    discovery_failed = False
+    discovery_error: Optional[str] = None
     try:
         models = fetch_models_fn(base_url, api_key)
     except httpx.HTTPError as e:
-        print(f"Failed to reach {base_url}/models: {e}", file=sys.stderr)
-        return 3
+        discovery_failed = True
+        discovery_error = str(e)
+        models = []
+
+    if discovery_failed or not models:
+        if discovery_failed:
+            print(
+                f"Model discovery unavailable from {base_url}/models "
+                f"({discovery_error}). Skipping catalog population.",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"Endpoint reachable but {base_url}/models returned no "
+                f"models. Skipping catalog population.",
+                file=sys.stderr,
+            )
+        fallback = prompt_fn(
+            "Enter a model ID to use as default (or leave blank to skip): "
+        ).strip()
+        if fallback:
+            models = [fallback]
 
     catalog = _load_user_catalog(catalog_path)
     catalog.setdefault("providers", {})
@@ -164,27 +190,30 @@ def handle_init(
     }
     _write_user_catalog(catalog, catalog_path)
 
-    if not models:
-        print(
-            f"Provider reachable but returned no models. "
-            f"Check {base_url}/models.",
-            file=sys.stderr,
-        )
-        return 4
-    test_model = models[0]
-    ok = test_completion_fn(base_url, api_key, test_model)
-    if not ok:
-        print(
-            f"Model list retrieved but test completion against "
-            f"{test_model} failed.",
-            file=sys.stderr,
-        )
-        return 5
+    test_status: Optional[str] = None
+    if models and not discovery_failed:
+        test_model = models[0]
+        ok = test_completion_fn(base_url, api_key, test_model)
+        if ok:
+            test_status = f"Test completion against {test_model} succeeded"
+        else:
+            test_status = (
+                f"Test completion against {test_model} failed; "
+                f"credentials saved anyway. Run 'usai-harness verify' to retry."
+            )
 
     print()
     print(f"Credentials written to {env_path}")
-    print(f"{len(models)} models discovered and cached at {catalog_path}")
-    print(f"Test completion against {test_model} succeeded")
+    if models:
+        print(f"{len(models)} model(s) cached at {catalog_path}")
+    else:
+        print(
+            f"No models cached. Set a default model with 'usai-harness "
+            f"discover-models {provider_name}' once the endpoint is reachable, "
+            f"or pass --model to ping/complete."
+        )
+    if test_status is not None:
+        print(test_status)
     print()
     print("Run 'usai-harness verify' at any time to re-check.")
     return 0
@@ -306,7 +335,13 @@ def handle_discover_models(
             any_failed = True
 
     _write_user_catalog(catalog, catalog_path)
-    return 0 if not any_failed else 3
+    if any_failed:
+        print(
+            "discover-models: one or more providers failed; the rest were "
+            "refreshed. Re-run when the failing endpoint is reachable.",
+            file=sys.stderr,
+        )
+    return 0
 
 
 def handle_verify(
@@ -388,8 +423,14 @@ def handle_verify(
     return 0 if not any_failed else 1
 
 
-def handle_ping() -> int:
-    """Minimal single-call check against the default provider."""
+def handle_ping(model: Optional[str] = None) -> int:
+    """Minimal single-call check against the default provider.
+
+    If `model` is None, the harness picks the default model from the
+    configured catalog. Pass `model` explicitly when the user-level
+    catalog is empty (for example after `init` was run against an
+    endpoint whose `/models` was unavailable).
+    """
     import asyncio
 
     from usai_harness.client import USAiClient
@@ -397,10 +438,13 @@ def handle_ping() -> int:
     async def _run() -> int:
         client = USAiClient(project="ping")
         try:
-            resp = await client.complete(
-                messages=[{"role": "user", "content": "ping"}],
-                max_tokens=5,
-            )
+            kwargs: dict = {
+                "messages": [{"role": "user", "content": "ping"}],
+                "max_tokens": 5,
+            }
+            if model:
+                kwargs["model"] = model
+            resp = await client.complete(**kwargs)
             return 0 if resp and "choices" in resp else 1
         finally:
             await client.close()

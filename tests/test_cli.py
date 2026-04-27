@@ -106,7 +106,15 @@ def test_ping_invokes_handler(monkeypatch, recorder):
     monkeypatch.setattr(cli_mod, "handle_ping", make("ping"))
     rc = cli_mod.cli_main(["ping"])
     assert rc == 0
-    assert calls == [("ping", (), {})]
+    assert calls == [("ping", (), {"model": None})]
+
+
+def test_ping_passes_model_flag(monkeypatch, recorder):
+    calls, make = recorder
+    monkeypatch.setattr(cli_mod, "handle_ping", make("ping"))
+    rc = cli_mod.cli_main(["ping", "--model", "models/gemini-2.5-flash"])
+    assert rc == 0
+    assert calls == [("ping", (), {"model": "models/gemini-2.5-flash"})]
 
 
 def test_audit_default(monkeypatch, recorder):

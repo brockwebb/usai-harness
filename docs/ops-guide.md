@@ -37,7 +37,15 @@ You will be prompted for:
 2. Base URL for the provider (find it in the USAi console under the API tab)
 3. API key (will not echo to the terminal)
 
-The command will write your credentials to the user-level config directory, fetch the live model list from the endpoint, and run a test call to confirm everything works. On success you see the list of available models and a sample response. On failure you get a specific error message telling you what needs fixing.
+The base URL must include the API path prefix up to but not including `/chat/completions`. Examples:
+
+- USAi: `https://hostname/api/v1`
+- OpenAI / OpenAI-compatible: `https://hostname/v1`
+- Gemini OpenAI-compat: `https://generativelanguage.googleapis.com/v1beta/openai`
+
+The harness appends `/chat/completions` and `/models` to whatever you provide. If you supply only the hostname, model discovery and completion calls will both 404.
+
+The command will write your credentials to the user-level config directory, fetch the live model list from the endpoint, and run a test call to confirm everything works. On success you see the list of available models and a sample response. If model discovery is unavailable (the endpoint is reachable but `/models` returns 404, or the network is down), `init` warns, prompts you for a default model ID to use, and writes credentials anyway so you are not stuck. Run `usai-harness discover-models` later to populate the catalog when the endpoint is reachable.
 
 Re-running `init` is safe. It does not accumulate state.
 

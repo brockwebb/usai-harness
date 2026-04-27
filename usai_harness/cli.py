@@ -64,8 +64,12 @@ def _build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "verify", help="End-to-end health check of all providers"
     )
-    subparsers.add_parser(
+    pp = subparsers.add_parser(
         "ping", help="Minimal single-call check of the default provider"
+    )
+    pp.add_argument(
+        "--model", default=None,
+        help="Override the default model (useful when the catalog is empty)",
     )
 
     au = subparsers.add_parser("audit", help="Security hygiene checks")
@@ -96,7 +100,7 @@ def cli_main(argv: list[str] | None = None) -> int:
     if args.command == "verify":
         return handle_verify()
     if args.command == "ping":
-        return handle_ping()
+        return handle_ping(model=args.model)
     if args.command == "audit":
         return handle_audit(fix_gitignore=args.fix_gitignore)
     parser.print_help()

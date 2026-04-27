@@ -101,37 +101,75 @@ def test_init_empty_api_key_returns_2():
     assert rc == 2
 
 
-def test_init_fetch_http_error_returns_3():
+def test_init_resilient_to_discovery_failure(tmp_path, capsys):
+    """A 404 on /models must not block init; user supplies a default model."""
     def boom(*a):
-        raise httpx.ConnectError("no route")
+        raise httpx.HTTPStatusError(
+            "404", request=httpx.Request("GET", "https://x"),
+            response=httpx.Response(404),
+        )
+
+    completion_calls = []
 
     rc = setup_commands.handle_init(
-        prompt_fn=_prompt_sequence("usai", "https://example.com/v1"),
+        prompt_fn=_prompt_sequence(
+            "usai", "https://example.com/api/v1", "models/fallback-default",
+        ),
         getpass_fn=_getpass_const("k"),
         fetch_models_fn=boom,
-        test_completion_fn=lambda *a: True,
+        test_completion_fn=lambda *a: completion_calls.append(a) or True,
     )
-    assert rc == 3
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "Model discovery unavailable" in captured.err
+    # No test_completion when discovery fails (we cannot vouch for a typed model).
+    assert completion_calls == []
+    # Credentials were written.
+    assert (
+        "USAI_API_KEY=k"
+        in setup_commands.user_config_env_path().read_text()
+    )
+    # Catalog has the user-supplied default.
+    import yaml as _yaml
+    cat = _yaml.safe_load(setup_commands.user_config_models_path().read_text())
+    assert cat["providers"]["usai"]["models"] == ["models/fallback-default"]
 
 
-def test_init_empty_model_list_returns_4():
+def test_init_resilient_to_empty_model_list(tmp_path, capsys):
     rc = setup_commands.handle_init(
-        prompt_fn=_prompt_sequence("usai", "https://example.com/v1"),
+        prompt_fn=_prompt_sequence(
+            "usai", "https://example.com/api/v1", "models/manual-default",
+        ),
         getpass_fn=_getpass_const("k"),
         fetch_models_fn=lambda *a: [],
         test_completion_fn=lambda *a: True,
     )
-    assert rc == 4
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "no models" in captured.err.lower()
+    import yaml as _yaml
+    cat = _yaml.safe_load(setup_commands.user_config_models_path().read_text())
+    assert cat["providers"]["usai"]["models"] == ["models/manual-default"]
 
 
-def test_init_test_completion_failure_returns_5():
+def test_init_test_completion_failure_still_writes_creds(tmp_path, capsys):
+    """test_completion failure no longer blocks init; warning printed, exit 0."""
     rc = setup_commands.handle_init(
-        prompt_fn=_prompt_sequence("usai", "https://example.com/v1"),
+        prompt_fn=_prompt_sequence("usai", "https://example.com/api/v1"),
         getpass_fn=_getpass_const("k"),
         fetch_models_fn=lambda *a: ["m1"],
         test_completion_fn=lambda *a: False,
     )
-    assert rc == 5
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "Test completion against m1 failed" in captured.out
+    assert (
+        "USAI_API_KEY=k"
+        in setup_commands.user_config_env_path().read_text()
+    )
 
 
 def test_init_idempotent_upsert(tmp_path):
@@ -333,7 +371,7 @@ def test_discover_models_single_provider(tmp_path, monkeypatch):
     assert catalog["providers"]["openrouter"]["models"] == ["or-old"]
 
 
-def test_discover_models_partial_failure_returns_3(tmp_path, monkeypatch):
+def test_discover_models_partial_failure_warns_and_exits_0(tmp_path, monkeypatch, capsys):
     setup_commands.handle_init(
         prompt_fn=_prompt_sequence("usai", "https://ex/v1"),
         getpass_fn=_getpass_const("k"),
@@ -356,7 +394,11 @@ def test_discover_models_partial_failure_returns_3(tmp_path, monkeypatch):
         return ["ok-model"]
 
     rc = setup_commands.handle_discover_models(fetch_models_fn=mixed)
-    assert rc == 3
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert "openrouter" in captured.err
+    assert "one or more providers failed" in captured.err
 
 
 # ---------- handle_verify -------------------------------------------------

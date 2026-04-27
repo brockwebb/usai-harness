@@ -24,6 +24,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ### Removed
 - `api_key_env` fallback on `azure_keyvault` credential providers. Use `api_key_secret` instead. Previously emitted a `DeprecationWarning`; now raises `ConfigError`.
 
+### Fixed
+- `usai-harness init` no longer hard-fails when the endpoint's `/models` response is unavailable (404, timeout, connection error). It warns, prompts the user for a default model ID, writes credentials regardless, and exits 0. Test completion failure also no longer blocks credential write; the warning is informational. Resolves the showstopper where a partly-working endpoint left first-time users with no configured credentials.
+- `usai-harness discover-models` exits 0 on partial provider failure (with a stderr warning naming the failing providers) instead of 3, so a single bad endpoint does not abort batch refresh of the others.
+- `usai-harness ping` accepts `--model` so you can target a specific model when the user-level catalog is empty (typical right after a first-run `init` against an endpoint with discovery offline).
+- Operations guide now documents the base URL convention with examples for USAi (`/api/v1`), OpenAI (`/v1`), and Gemini (`/v1beta/openai`). The `init` prompt mirrors the convention in its prompt text. The harness appends only `/chat/completions` and `/models`.
+
 ### Changed
 - Engineering documentation spine (`docs/srs.md`, `docs/rtm.md`, `docs/nfr.md`, `docs/architecture.md`, `docs/tevv-plan.md`) brought current with the alignment sweep and Tasks 06 through 10. RTM Section 8 repurposed from baseline-gaps to current-remaining-work; coverage summary recomputed after FR-042 and IR-005 additions.
 - ADR-007 amended to document the reversal of the original Task 04 conservative decision to drop error response bodies. Boundary-enforced redaction validated by Task 08 Gemini smoke test now makes diagnostic body capture safe.
