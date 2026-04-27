@@ -17,6 +17,93 @@ import yaml
 from usai_harness.key_manager import user_config_env_path
 
 
+def _masked_input(prompt: str) -> str:
+    """Read a key from stdin, echoing '*' per character. Cross-platform.
+
+    Replaces `getpass.getpass()` for the credential-prompt case where users
+    pasting a long key into a silent prompt routinely think the paste failed.
+    The key itself is never written to the terminal; only `*` characters are
+    echoed. Backspace is handled. On a non-TTY stdin (CI piped input, tests),
+    falls back to a plain line read with no echo.
+    """
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+
+    if sys.platform == "win32":
+        try:
+            import msvcrt
+        except ImportError:
+            return getpass.getpass("")
+        buf: list[str] = []
+        while True:
+            ch = msvcrt.getwch()
+            if ch in ("\r", "\n"):
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+                break
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch in ("\b", "\x7f"):
+                if buf:
+                    buf.pop()
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+            buf.append(ch)
+            sys.stdout.write("*")
+            sys.stdout.flush()
+        return "".join(buf)
+
+    try:
+        import termios
+        import tty
+    except ImportError:
+        return getpass.getpass("")
+
+    fd = sys.stdin.fileno()
+    if not sys.stdin.isatty():
+        return sys.stdin.readline().rstrip("\r\n")
+
+    old_attrs = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        buf = []
+        while True:
+            ch = sys.stdin.read(1)
+            if ch in ("\r", "\n"):
+                sys.stdout.write("\r\n")
+                sys.stdout.flush()
+                break
+            if ch == "\x03":
+                raise KeyboardInterrupt
+            if ch in ("\x7f", "\b"):
+                if buf:
+                    buf.pop()
+                    sys.stdout.write("\b \b")
+                    sys.stdout.flush()
+                continue
+            buf.append(ch)
+            sys.stdout.write("*")
+            sys.stdout.flush()
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_attrs)
+    return "".join(buf)
+
+
+def _mask_for_echo(value: str, tail: int = 4) -> str:
+    """Render a key as `****<last N>` for confirmation lines.
+
+    Short values (<= 2*tail) are fully masked to avoid revealing too much of
+    the secret. The tail is intentionally small and matches the convention
+    other CLIs use for credential confirmation (AWS, gcloud).
+    """
+    if not value:
+        return ""
+    if len(value) <= tail * 2:
+        return "*" * len(value)
+    return ("*" * (len(value) - tail)) + value[-tail:]
+
+
 def user_config_models_path() -> Path:
     """Companion to user_config_env_path; where init/discover-models write the catalog."""
     env_path = user_config_env_path()
@@ -116,7 +203,7 @@ def _test_completion(
 
 def handle_init(
     prompt_fn: Callable[[str], str] = input,
-    getpass_fn: Callable[[str], str] = getpass.getpass,
+    getpass_fn: Callable[[str], str] = _masked_input,
     env_path: Optional[Path] = None,
     catalog_path: Optional[Path] = None,
     fetch_models_fn: Callable[[str, str], list[str]] = _fetch_models,
@@ -145,13 +232,14 @@ def handle_init(
         return 2
     api_key_env = f"{provider_name.upper()}_API_KEY"
     api_key = getpass_fn(
-        f"API key (stored as {api_key_env}, not echoed): "
+        f"API key (stored as {api_key_env}, masked while typing): "
     ).strip()
     if not api_key:
         print("API key is required.", file=sys.stderr)
         return 2
 
     _write_env_var(env_path, api_key_env, api_key)
+    print(f"Key saved: {_mask_for_echo(api_key)}")
 
     discovery_failed = False
     discovery_error: Optional[str] = None
@@ -222,7 +310,7 @@ def handle_init(
 def handle_add_provider(
     name: str,
     prompt_fn: Callable[[str], str] = input,
-    getpass_fn: Callable[[str], str] = getpass.getpass,
+    getpass_fn: Callable[[str], str] = _masked_input,
     env_path: Optional[Path] = None,
     catalog_path: Optional[Path] = None,
     fetch_models_fn: Callable[[str, str], list[str]] = _fetch_models,
@@ -247,13 +335,14 @@ def handle_add_provider(
         return 2
     api_key_env = f"{name.upper()}_API_KEY"
     api_key = getpass_fn(
-        f"API key (stored as {api_key_env}, not echoed): "
+        f"API key (stored as {api_key_env}, masked while typing): "
     ).strip()
     if not api_key:
         print("API key is required.", file=sys.stderr)
         return 2
 
     _write_env_var(env_path, api_key_env, api_key)
+    print(f"Key saved: {_mask_for_echo(api_key)}")
 
     try:
         models = fetch_models_fn(base_url, api_key)
