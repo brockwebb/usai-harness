@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-04-27
+
 ### Added
 - GitHub Actions CI workflow at `.github/workflows/ci.yml`. Test matrix across Linux, macOS, and Windows on Python 3.12, 3.13, and 3.14. Separate jobs for `pip-audit` (advisory, soft-fail with findings surfaced to the job summary) and lockfile-install verification (`pip install --require-hashes -r requirements.lock` plus a hard-deps-only smoke test).
 - Dependabot configuration at `.github/dependabot.yml` for weekly pip and github-actions dependency update PRs.
@@ -28,7 +30,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - `usai-harness init` no longer hard-fails when the endpoint's `/models` response is unavailable (404, timeout, connection error). It warns, prompts the user for a default model ID, writes credentials regardless, and exits 0. Test completion failure also no longer blocks credential write; the warning is informational. Resolves the showstopper where a partly-working endpoint left first-time users with no configured credentials.
 - `usai-harness discover-models` exits 0 on partial provider failure (with a stderr warning naming the failing providers) instead of 3, so a single bad endpoint does not abort batch refresh of the others.
 - `usai-harness ping` accepts `--model` so you can target a specific model when the user-level catalog is empty (typical right after a first-run `init` against an endpoint with discovery offline).
-- Operations guide now documents the base URL convention with examples for USAi (`/api/v1`), OpenAI (`/v1`), and Gemini (`/v1beta/openai`). The `init` prompt mirrors the convention in its prompt text. The harness appends only `/chat/completions` and `/models`.
 
 ### Changed
 - `usai-harness init` now auto-detects the API path prefix during setup. After the user enters a base URL, the harness probes `/api/v1`, then `/v1`, then the bare URL against the endpoint's `/models`; the first 200 wins and the resolved URL (with prefix) is stored. Users who paste a bare hostname (the same URL they'd paste into the API tester) get a working setup without needing to know `/api/v1` vs `/v1`. Users who already include a prefix are unaffected. If every probe fails, the Task 15 fallback path (warn, prompt for default model, save credentials anyway) still applies.
@@ -36,7 +37,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 - Engineering documentation spine (`docs/srs.md`, `docs/rtm.md`, `docs/nfr.md`, `docs/architecture.md`, `docs/tevv-plan.md`) brought current with the alignment sweep and Tasks 06 through 10. RTM Section 8 repurposed from baseline-gaps to current-remaining-work; coverage summary recomputed after FR-042 and IR-005 additions.
 - ADR-007 amended to document the reversal of the original Task 04 conservative decision to drop error response bodies. Boundary-enforced redaction validated by Task 08 Gemini smoke test now makes diagnostic body capture safe.
 - `transport.py` module docstring documents the rationale for error body snippet capture and warns future contributors against reverting it.
-- Test count: 208 unit tests (was 195 at 0.1.0).
+- Test count: 213 unit tests (was 195 at 0.1.0). All 11 integration tests pass against live USAi.
 
 ## [0.1.0] - 2026-04-24
 
@@ -66,5 +67,6 @@ First release. Pip-installable Python client library for rate-limited, model-agn
 - Non-HTTPS endpoints emit a TLS warning on first request.
 - `model_requested` vs `model_returned` surfaces silent model substitution by the endpoint.
 
-[Unreleased]: ../../compare/0.1.0...HEAD
+[Unreleased]: ../../compare/0.1.1...HEAD
+[0.1.1]: ../../compare/0.1.0...0.1.1
 [0.1.0]: ../../releases/tag/0.1.0
