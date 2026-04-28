@@ -52,15 +52,16 @@ async def complete(
 **Parameters:**
 
 - `messages`: List of message dictionaries in OpenAI chat format. Required.
-- `model`: Model identifier. If omitted, the default model from the active provider configuration is used.
+- `model`: Model identifier. Must be a member of the project config's pool. If omitted, the project's `default_model` is used. Passing a model that is not in the pool raises `ValueError`.
 - `provider`: Provider identifier. If omitted, the default provider is used.
-- `temperature`, `max_tokens`, `system_prompt`: Standard generation parameters. If omitted, provider or model defaults apply.
+- `temperature`, `max_tokens`, `system_prompt`: Standard generation parameters. When provided, they are validated against the chosen model's catalog ranges (not the default model's). When omitted, the project-default values apply, falling back to the catalog defaults for the chosen model.
 - `**extra_params`: Any additional keyword arguments are passed through to the transport as provider-specific parameters.
 
 **Returns:** A `CompletionResponse` with fields for `content`, `model_requested`, `model_returned`, `prompt_tokens`, `completion_tokens`, `total_tokens`, `cost`, and `latency_ms`.
 
 **Raises:**
 
+- `ValueError` when `model` is not in the project's pool, or when `temperature`/`max_tokens` is out of range for the chosen model.
 - `AuthenticationError` on HTTP 401 or 403.
 - `ConfigurationError` on invalid parameters.
 - `TransportError` for network or provider errors not covered by retry.
@@ -83,7 +84,7 @@ async def batch(
 
 **Parameters:**
 
-- `tasks`: List of task dictionaries. Each must contain a `messages` field. Optional per-task fields: `model`, `provider`, `temperature`, `max_tokens`, `system_prompt`, `task_id`, `metadata`. Any other fields pass through to the transport.
+- `tasks`: List of task dictionaries. Each must contain a `messages` field. Optional per-task fields: `model` (must be a pool member), `provider`, `temperature`, `max_tokens`, `system_prompt`, `task_id`, `metadata`. Any other fields pass through to the transport. Per-task `model` and `temperature` are validated at task-build time against the chosen model's catalog entry; mismatches raise before any HTTP traffic, so a typo or out-of-range value fails fast.
 - `job_name`: Identifier for this batch. Appears in logs and ledger entries. Used for checkpoint and resume.
 - `log_content`: If `True`, prompts and responses are written to the call log for this batch only. Default is `False`. See Section 5 for why you should leave this off unless debugging.
 - `checkpoint_path`: Where to write checkpoint state during the batch. Default is `checkpoints/{job_name}.json` in the working directory.
@@ -92,8 +93,27 @@ async def batch(
 
 **Raises:**
 
+- `ValueError` when a task selects a model that is not in the pool, or when a task's `temperature`/`max_tokens` is out of range for the chosen model.
 - `AuthenticationError` if the credential fails. Checkpoint is preserved; resume via `batch()` with the same `job_name` picks up where it left off.
 - `ConfigurationError` at start if the task list is malformed.
+
+**Example: mixed-model batch.** Each task can target a different pool member; the worker pool dispatches them through the same client without per-model setup:
+
+```python
+async with USAiClient(project="rater-ensemble") as client:
+    tasks = [
+        {"messages": [{"role": "user", "content": q}],
+         "model": "claude-sonnet-4-5-20241022", "task_id": f"sonnet_{i:03d}"}
+        for i, q in enumerate(questions)
+    ] + [
+        {"messages": [{"role": "user", "content": q}],
+         "model": "claude-opus-4-5-20250521", "task_id": f"opus_{i:03d}"}
+        for i, q in enumerate(questions)
+    ]
+    results = await client.batch(tasks, job_name="multi-rater")
+```
+
+Both models must be members of the pool declared in `usai_harness.yaml`; both must share the same provider (cross-provider pools are rejected).
 
 ### 1.4 Resume after auth failure
 
@@ -186,27 +206,51 @@ models:
 - `temp_range`, `temp_default` (optional): Temperature bounds and default.
 - `input_rate_per_1k`, `output_rate_per_1k` (optional): Cost per thousand tokens for input and output. Defaults to zero (free credit periods).
 
-### 2.2 Project configuration (`usai-harness.yaml`)
+### 2.2 Project configuration (`usai_harness.yaml`)
 
-Project-level overrides go in a `usai-harness.yaml` file in the project root. All fields are optional.
+Project-level configuration lives in a single file named `usai_harness.yaml` at the project root (ADR-011). The harness discovers this file automatically when `USAiClient` is instantiated from the project root; pass `config_path=` explicitly when your script runs from elsewhere. The `usai-harness project-init` command writes this file with sensible defaults; the example below shows the schema after that file has been edited for a multi-model project.
 
 ```yaml
-credentials:
-  backend: dotenv              # dotenv | envvar | azure_keyvault
-  vault_url: null              # required when backend is azure_keyvault
-  secret_name: null            # required when backend is azure_keyvault
+project: rater-ensemble
+provider: usai                 # must match every pool member's catalog provider
 
-transport: httpx               # httpx | litellm
+models:
+  - name: claude-sonnet-4-5-20241022
+    # Optional per-model overrides; uncomment to set.
+    # temperature: 0
+    # max_tokens: 4096
+  - name: claude-opus-4-5-20250521
+  - name: gemini-2.5-flash
 
-default_provider: usai
 default_model: claude-sonnet-4-5-20241022
 
+# Concurrency
 workers: 3                     # parallel workers, default 3
+batch_size: 50                 # default batch size for cost reporting
 
-rate_overrides:
-  usai:
-    refill_per_sec: 2.5        # tighter than global default for this project
+# Project-default request parameters (validated against default_model's catalog ranges)
+temperature: 0.0
+max_tokens: null               # falls back to default_model.max_output_tokens
+
+# Output paths (relative to project root or absolute)
+ledger_path: output/cost_ledger.jsonl
+log_dir: output/logs
+
+# Optional credential backend override (defaults to dotenv)
+credentials:
+  backend: dotenv              # dotenv | env_var | azure_keyvault
+  # vault_url: ...             # required when backend is azure_keyvault
 ```
+
+**Key fields**
+
+- `models` (required): A list of pool members. Each entry is a string model name or a mapping with a `name` key plus optional per-model `temperature` / `max_tokens` overrides. Every member must exist in the merged catalog, and per-member overrides are validated against the *target model's* catalog ranges, not the default model's.
+- `default_model` (required when `models` has more than one member): A pool member that becomes the default for tasks that do not specify `model`. With a single-member pool, `default_model` may be omitted and that member is the default.
+- `provider` (required when pool members come from multiple providers in the catalog): The endpoint provider for every pool member. Cross-provider pools are rejected; instantiate one client per provider in projects that genuinely need that.
+- `workers`, `batch_size`, `temperature`, `max_tokens`, `system_prompt`: Project-default request parameters. Per-task overrides are validated against the *task's chosen model* at task-build time.
+- `credentials.backend`: Selects which `CredentialProvider` resolves the API key. See section 4.2.
+
+**Backward compatibility.** A legacy single-`model:` field is translated automatically to a one-element pool with that model as default; no warning is emitted. Configs that declare both `model:` and `models:` are rejected at load.
 
 Invalid fields cause the client to fail at initialization with a specific error message.
 

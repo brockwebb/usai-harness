@@ -36,13 +36,26 @@ clean shutdown when a key expires mid-job.
 ```bash
 pip install usai-harness
 usai-harness init
+cd your-project
+usai-harness project-init
+python scripts/example_batch.py
+cat tevv/init_report_*.md
 ```
 
-The `init` command prompts you for your API endpoint and key, writes them to
-your user config, pulls the live model list from the endpoint, and runs a
-test call to confirm everything works. Five minutes, two prompts, done.
+The `init` command (run once per machine) prompts you for your API endpoint
+and key, writes them to your user config, pulls the live model list from the
+endpoint, and runs a test call to confirm everything works.
 
-After `init`, any Python project on your machine can do this:
+The `project-init` command (run once per project, in the project root)
+creates `usai_harness.yaml`, the `output/` and `tevv/` directories, and
+`scripts/example_batch.py`. It then runs a TEVV smoke test against the
+project's default model and writes a markdown report to
+`tevv/init_report_<UTC_timestamp>.md`. Re-running is safe: it leaves your
+config and example script in place, deduplicates `.gitignore` entries, and
+produces a fresh report so you have evidence of every harness version your
+project has run against.
+
+After `project-init`, any Python script in the project can do this:
 
 ```python
 from usai_harness import USAiClient
@@ -53,7 +66,9 @@ async with USAiClient(project="my-project") as client:
     )
 ```
 
-No per-project setup. No per-project `.env`. The key is already there.
+The client picks up `usai_harness.yaml` from the current working directory
+automatically. Pass `config_path=` explicitly if your script runs from a
+different location.
 
 ## Running a batch job
 
@@ -71,6 +86,52 @@ Batch calls are rate-limited automatically, retry transient failures, and
 write a structured log and a cost ledger as they run. If the key expires
 partway through, the job halts cleanly, preserves its progress, and can be
 resumed after you refresh the key.
+
+### Multiple models per project
+
+Declare a pool of models in `usai_harness.yaml` and pick which one each
+task uses at submit time:
+
+```yaml
+project: rater-ensemble
+provider: usai
+
+models:
+  - name: claude-sonnet-4-5-20241022
+  - name: claude-opus-4-5-20250521
+  - name: gemini-2.5-flash
+
+default_model: claude-sonnet-4-5-20241022
+workers: 3
+```
+
+```python
+async with USAiClient(project="rater-ensemble") as client:
+    tasks = [
+        {"messages": [{"role": "user", "content": q}],
+         "model": "claude-sonnet-4-5-20241022", "task_id": f"sonnet_{i}"}
+        for i, q in enumerate(questions)
+    ] + [
+        {"messages": [{"role": "user", "content": q}],
+         "model": "claude-opus-4-5-20250521", "task_id": f"opus_{i}"}
+        for i, q in enumerate(questions)
+    ]
+    results = await client.batch(tasks, job_name="multi-rater")
+```
+
+Per-task `model` and `temperature` overrides are validated against the
+chosen model's catalog entry at task-build time, so a typo or out-of-range
+value fails before any HTTP traffic. Cross-provider pools are rejected;
+projects that genuinely need cross-provider work instantiate one client
+per provider.
+
+### Backward compatibility
+
+Older configs that declared a single `model:` field instead of a `models:`
+list are translated automatically to a one-element pool. No changes are
+required to upgrade an existing 0.1.x project to 0.2.0; running
+`project-init` in an existing project will leave your config in place and
+just produce a TEVV report.
 
 ### Before a long-running job
 

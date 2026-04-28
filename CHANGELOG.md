@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-04-28
+
+The 0.2.0 release lands three architectural changes recorded in ADRs 011, 012, and 013, all aimed at making the harness adoption-ready for downstream projects. A new project carries its own `usai_harness.yaml` at project root (ADR-011), declares a pool of models rather than a single model (ADR-012), and bootstraps in one command with a TEVV smoke test that produces a markdown provenance report (ADR-013). The federal-survey-concept-mapper integration is the forcing function: every change in this release came from a real consumer hitting a real friction point during adoption.
+
 ### Added
 - New CLI subcommand `usai-harness project-init` that creates a standard project layout (`usai_harness.yaml`, `output/`, `output/logs/`, `tevv/`, `scripts/example_batch.py`) and runs a TEVV smoke round-trip against the project's default model (ADR-013). Idempotent: re-running leaves the config and example script in place, deduplicates `.gitignore` entries, and writes a fresh timestamped report under `tevv/`.
 - Templates directory `usai_harness/templates/` with starter project config and example script, packaged via `pyproject.toml [tool.setuptools.package-data]`.
@@ -79,6 +83,7 @@ First release. Pip-installable Python client library for rate-limited, model-agn
 - Non-HTTPS endpoints emit a TLS warning on first request.
 - `model_requested` vs `model_returned` surfaces silent model substitution by the endpoint.
 
-[Unreleased]: ../../compare/0.1.1...HEAD
+[Unreleased]: ../../compare/0.2.0...HEAD
+[0.2.0]: ../../compare/0.1.1...0.2.0
 [0.1.1]: ../../compare/0.1.0...0.1.1
 [0.1.0]: ../../releases/tag/0.1.0

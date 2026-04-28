@@ -53,6 +53,58 @@ This runs an end-to-end check against every configured provider: credential reso
 
 Once verify passes, the fastest way to confirm the harness works from your own code is to run `python docs/examples/01_quickstart.py`. It is a thirty-line script that issues one completion through the public Python API.
 
+### 1.4 Bootstrap a project
+
+Run `usai-harness project-init` once per project, from the project's root directory. The command:
+
+1. Creates `usai_harness.yaml` (if absent) with the project name from the directory name, the provider and default model from the user-level catalog, and a one-element pool you can extend later.
+2. Creates `output/`, `output/logs/`, `tevv/`, `scripts/`, `inputs/`, and `outputs/` directories.
+3. Writes `scripts/example_batch.py`, a runnable demonstration of `client.batch()` against a small input file. Edit it freely or replace it with your real job.
+4. Appends entries to `.gitignore` for the data files (`output/cost_ledger.jsonl`, `output/logs/`). The `.yaml` config is intended to be committed; the per-run data is not.
+5. Runs one TEVV smoke round-trip against the project's default model with the trivial prompt "Reply with the word OK." and writes a markdown report to `tevv/init_report_<UTC_timestamp>.md`.
+
+`project-init` is idempotent. Existing `usai_harness.yaml` and `scripts/example_batch.py` are left in place. Existing `.gitignore` lines are not duplicated. Each run produces a fresh timestamped TEVV report; the `tevv/` directory accumulates one report per run, which is a regression history per project.
+
+The exit code is 0 on TEVV pass and 1 on TEVV fail. A failed TEVV does not roll back created files; the layout is still useful for diagnosis and the report records the failure mode.
+
+### 1.5 Project configuration schema
+
+The `usai_harness.yaml` written by `project-init` is the file your project edits to declare its model pool and per-project settings. The schema:
+
+```yaml
+project: rater-ensemble
+provider: usai
+
+models:
+  - name: claude-sonnet-4-5-20241022
+    # Optional per-model overrides; uncomment to set.
+    # temperature: 0
+    # max_tokens: 4096
+  - name: claude-opus-4-5-20250521
+  - name: gemini-2.5-flash
+
+default_model: claude-sonnet-4-5-20241022
+
+workers: 3
+batch_size: 50
+
+# Project-default request parameters (validated against default_model's ranges).
+temperature: 0.0
+max_tokens: null
+
+# Output paths
+ledger_path: output/cost_ledger.jsonl
+log_dir: output/logs
+
+# Optional credential backend override (defaults to dotenv)
+credentials:
+  backend: dotenv              # dotenv | env_var | azure_keyvault
+```
+
+Every pool member must exist in the merged catalog (run `usai-harness discover-models` to refresh from the live endpoint). Cross-provider pools are rejected. Per-pool-member `temperature` and `max_tokens` overrides are validated against that member's catalog ranges, not the default model's. Per-task `model` and `temperature` overrides in `batch()` and `complete()` are validated against the task's chosen model at task-build time, so a typo or out-of-range value fails before any HTTP traffic.
+
+Older configs that declared a single `model:` field translate automatically to a one-element pool. Configs declaring both `model:` and `models:` are rejected at load.
+
 ## 2. Key Rotation
 
 ### 2.1 USAi keys (DotEnv backend, default)
@@ -93,6 +145,8 @@ usai-harness verify
 This takes about thirty seconds and confirms every provider works end-to-end. If you are about to launch a job that will run overnight, over a weekend, or through business hours when you are not watching, this is the difference between finding out something broke Monday morning and finding out Friday afternoon.
 
 Check your key lifetime. If the USAi key was issued five days ago and your job will run three days, refresh the key now rather than letting the job halt partway through.
+
+After a `pip install --upgrade usai-harness`, re-run `usai-harness project-init` from the project root. It will leave your config and example script in place, deduplicate gitignore entries, and produce a fresh TEVV report under `tevv/`. The accumulated `tevv/init_report_*.md` files form a regression history: every harness version your project has run against has a recorded round-trip showing it worked at adoption time. If the new harness version regresses, the smoke test catches it before the upgrade ships into a long-running job.
 
 ### 3.2 During a job
 

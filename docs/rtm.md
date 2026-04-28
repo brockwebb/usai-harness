@@ -1,8 +1,8 @@
 # Requirements Traceability Matrix — usai-harness
 
-**Version:** 1.3
+**Version:** 1.4
 **Date:** 2026-04-28
-**Status:** Audited (through 0.1.1 release + ADR-011/012/013 declared as Proposed for Phases B/C)
+**Status:** Audited (0.2.0 release: ADR-011/012/013 implemented across Phases B and C)
 
 ## 1. Purpose
 
@@ -126,32 +126,32 @@ A requirement without an implementation is not yet built. A requirement without 
 
 | ID | Implementation | Test | Method | Source | Status |
 |----|----------------|------|--------|--------|--------|
-| FR-043 | `config.py` default discovery of `usai_harness.yaml` (Phase B) | `test_config.py::test_project_config_default_path_*` (Phase B) | M-1 | ADR-011 | Proposed |
-| FR-044 | `client.py::USAiClient(config_path=...)`, `cli.py` `--config` flag (Phase B/C) | `test_client.py::test_explicit_config_path`, `test_cli.py::test_subcommand_config_flag` (Phase B/C) | M-1 | ADR-011 | Proposed |
-| FR-045 | `config.py` fallback path when no config file present (Phase B) | `test_config.py::test_project_config_absent_falls_back_*` (Phase B) | M-1 | ADR-011 | Proposed |
+| FR-043 | `client.py::USAiClient._resolve_project_config_path` discovers `usai_harness.yaml` in CWD | covered indirectly by every `test_client.py` test that runs without an explicit config | M-1 | ADR-011 | Implemented |
+| FR-044 | `client.py::USAiClient(config_path=...)` parameter | `test_client.py::test_client_uses_project_config` and pool tests pass `config_path=` | M-1 | ADR-011 | Implemented |
+| FR-045 | `client.py::USAiClient.__init__` fallback to default ProjectConfig when no config file | `test_client.py::test_client_defaults_without_config` | M-1 | ADR-011 | Implemented |
 
 ### 3.13 Model Pool
 
 | ID | Implementation | Test | Method | Source | Status |
 |----|----------------|------|--------|--------|--------|
-| FR-046 | `config.py::ProjectConfig.models` list, loader walk (Phase B) | `test_config.py::test_pool_*` (Phase B) | M-1 | ADR-012 | Proposed |
-| FR-047 | `config.py` default_model resolution rules (Phase B) | `test_config.py::test_default_model_required_when_pool_multi`, `test_config.py::test_default_model_implicit_when_pool_single` (Phase B) | M-1 | ADR-012 | Proposed |
-| FR-048 | `config.py` pool catalog cross-check (Phase B) | `test_config.py::test_pool_unknown_member_raises` (Phase B) | M-1 | ADR-012 | Proposed |
-| FR-049 | `config.py` per-model override validation (Phase B) | `test_config.py::test_pool_per_model_temperature_validation`, `test_config.py::test_pool_per_model_max_tokens_validation` (Phase B) | M-1 | ADR-012 | Proposed |
-| FR-050 | `client.py::_build_tasks`, `client.py::complete()` per-task validation (Phase B) | `test_client.py::test_task_model_validated_against_pool` (Phase B) | M-1 | ADR-012 | Proposed |
-| FR-051 | `config.py` provider/pool consistency check (Phase B) | `test_config.py::test_pool_cross_provider_rejected` (Phase B) | M-1 | ADR-012 | Proposed |
-| FR-052 | `config.py` legacy single-model translator (Phase B) | `test_config.py::test_legacy_single_model_translates_to_pool` (Phase B) | M-1 | ADR-012 | Proposed |
+| FR-046 | `config.py::ProjectConfig.models`, `ConfigLoader._collect_pool_specs`, `_validate_pool` | `test_config.py::test_project_config_pool_one_member`, `test_project_config_pool_multiple_members_with_default` | M-1 | ADR-012 | Implemented |
+| FR-047 | `config.py::ConfigLoader.load_project_config` default_model resolution | `test_config.py::test_project_config_pool_missing_default_with_multiple`, `test_project_config_pool_one_member` | M-1 | ADR-012 | Implemented |
+| FR-048 | `config.py::ConfigLoader._validate_pool` catalog cross-check | `test_config.py::test_project_config_pool_unknown_model` | M-1 | ADR-012 | Implemented |
+| FR-049 | `config.py::ConfigLoader._check_temperature`, `_check_max_tokens` | `test_config.py::test_project_config_pool_temperature_out_of_range`, `test_project_config_pool_max_tokens_out_of_range` | M-1 | ADR-012 | Implemented |
+| FR-050 | `client.py::USAiClient.complete`, `_build_tasks` per-task validation | `test_client.py::test_client_complete_with_pool_member_model`, `test_client_complete_with_non_pool_model`, `test_client_batch_per_task_model_override`, `test_client_batch_per_task_invalid_model`, `test_client_batch_per_task_temperature_validation` | M-1 | ADR-012 | Implemented |
+| FR-051 | `config.py::ConfigLoader.load_project_config` provider consistency check | `test_config.py::test_project_config_pool_provider_mismatch` | M-1 | ADR-012 | Implemented |
+| FR-052 | `config.py::ConfigLoader._collect_pool_specs` legacy single-model translation | `test_config.py::test_project_config_legacy_single_model`, `test_project_config_both_model_and_models_keys` | M-1 | ADR-012 | Implemented |
 
 ### 3.14 Project Bootstrap
 
 | ID | Implementation | Test | Method | Source | Status |
 |----|----------------|------|--------|--------|--------|
-| FR-053 | `cli.py` `project-init` subparser, `setup_commands.py::handle_project_init` (Phase C) | `test_cli.py::test_project_init_invokes_handler`, `test_setup_commands.py::test_project_init_*` (Phase C) | M-1 | ADR-013 | Proposed |
-| FR-054 | `setup_commands.py::handle_project_init` layout creator, `usai_harness/templates/` (Phase C) | `test_setup_commands.py::test_project_init_creates_layout`, `test_setup_commands.py::test_project_init_does_not_overwrite_*` (Phase C) | M-1, M-3 | ADR-013 | Proposed |
-| FR-055 | `setup_commands.py::handle_project_init` TEVV report writer (Phase C) | `test_setup_commands.py::test_project_init_writes_tevv_report` (Phase C) | M-1, M-4 | ADR-013 | Proposed |
-| FR-056 | `setup_commands.py::handle_project_init` smoke-test logic (Phase C) | `test_setup_commands.py::test_project_init_smoke_test_validates_*` (Phase C) | M-1 | ADR-013 | Proposed |
-| FR-057 | `setup_commands.py::handle_project_init` exit code path (Phase C) | `test_setup_commands.py::test_project_init_exit_code_pass`, `test_setup_commands.py::test_project_init_exit_code_fail` (Phase C) | M-1 | ADR-013 | Proposed |
-| FR-058 | `setup_commands.py::handle_project_init` idempotency guards (Phase C) | `test_setup_commands.py::test_project_init_idempotent` (Phase C) | M-1 | ADR-013 | Proposed |
+| FR-053 | `cli.py` `project-init` subparser, `setup_commands.py::handle_project_init` | `test_cli.py::test_project_init_invokes_handler`, `test_project_init.py::*` | M-1 | ADR-013 | Implemented |
+| FR-054 | `setup_commands.py::_create_project_layout`, `usai_harness/templates/` | `test_project_init.py::test_project_init_creates_config`, `test_project_init_creates_directories`, `test_project_init_creates_example_script`, `test_project_init_appends_gitignore`, `test_project_init_does_not_overwrite_config` | M-1, M-3 | ADR-013 | Implemented |
+| FR-055 | `setup_commands.py::_run_tevv_smoke_test`, `_write_tevv_report` | `test_project_init.py::test_project_init_tevv_pass` (verifies markdown report contents) | M-1, M-4 | ADR-013 | Implemented |
+| FR-056 | `setup_commands.py::_run_tevv_smoke_test` validation chain | `test_project_init.py::test_project_init_tevv_pass`, `test_project_init_tevv_fail_status`, `test_project_init_tevv_fail_content` | M-1 | ADR-013 | Implemented |
+| FR-057 | `setup_commands.py::handle_project_init` exit code path | `test_project_init.py::test_project_init_tevv_pass` (rc==0), `test_project_init_tevv_fail_status` (rc==1), `test_project_init_tevv_fail_content` (rc==1) | M-1 | ADR-013 | Implemented |
+| FR-058 | `setup_commands.py::_create_project_layout`, `_append_gitignore_lines` idempotency guards | `test_project_init.py::test_project_init_idempotent`, `test_project_init_does_not_overwrite_config` | M-1 | ADR-013 | Implemented |
 
 ## 4. Security Requirements
 
@@ -173,7 +173,7 @@ A requirement without an implementation is not yet built. A requirement without 
 | IR-003 | `configs/models.yaml` schema, `config.py` validation | `test_config.py::test_providers_block_parsed`, `test_config.py::test_provider_with_api_key_secret_loads`, `test_config.py::test_provider_with_neither_field_raises`, `test_config.py::test_secret_map_*` | M-1, M-3 | SRS Section 6 | Implemented |
 | IR-004 | `config.py::load_project_config` validation | `test_config.py::test_project_config_credentials_*`, `test_config.py::test_load_project_config_valid` | M-1 | SRS Section 6 | Implemented |
 | IR-005 | `config.py` `error_body_snippet_max_chars` validation, `transport.py` consumer | `test_config.py::test_error_body_snippet_max_chars_*`, `test_transport.py::test_error_body_snippet_*` | M-1 | ADR-007 (post-amendment) | Implemented |
-| IR-006 | `setup_commands.py::handle_project_init` TEVV report writer (Phase C) | `test_setup_commands.py::test_project_init_writes_tevv_report` (Phase C) | M-1, M-3 | ADR-013 | Proposed |
+| IR-006 | `setup_commands.py::_write_tevv_report` markdown structure | `test_project_init.py::test_project_init_tevv_pass` and `test_project_init_tevv_fail_*` assert report fields | M-1, M-3 | ADR-013 | Implemented |
 
 ## 6. Non-Functional Requirements
 
@@ -235,16 +235,16 @@ A requirement without an implementation is not yet built. A requirement without 
 
 | Category | Total | Implemented | Planned | Proposed | Not Started |
 |----------|-------|-------------|---------|----------|-------------|
-| Functional (FR) | 59 | 42 | 1 | 16 | 0 |
+| Functional (FR) | 59 | 58 | 1 | 0 | 0 |
 | Security (SEC) | 6 | 6 | 0 | 0 | 0 |
-| Interface (IR) | 6 | 5 | 0 | 1 | 0 |
+| Interface (IR) | 6 | 6 | 0 | 0 | 0 |
 | NFR Performance | 3 | 0 | 3 | 0 | 0 |
 | NFR Reliability | 4 | 0 | 4 | 0 | 0 |
 | NFR Security | 5 | 5 | 0 | 0 | 0 |
 | NFR Portability | 4 | 3 | 1 | 0 | 0 |
 | NFR Maintainability | 5 | 3 | 2 | 0 | 0 |
 | NFR Usability | 3 | 0 | 3 | 0 | 0 |
-| **Total** | **95** | **64** | **14** | **17** | **0** |
+| **Total** | **95** | **81** | **14** | **0** | **0** |
 
 Status definitions:
 
@@ -268,7 +268,7 @@ What remains as Planned at the time of this audit is work gated on a live USAi e
 
 CI infrastructure (NFR-S-004, NFR-S-005, NFR-PO-001, NFR-PO-002, NFR-PO-003) was added in Task 14 (`.github/workflows/ci.yml`); first green run on `feat/ci-workflow` covered all 9 test-matrix cells plus the audit and lockfile-install jobs.
 
-The Proposed batch (FR-043 through FR-058 plus IR-006) was declared by Phase A of the 2026-04-28 sequence. Phase B implements ADR-011 (project config convention) and ADR-012 (model pool schema) in `config.py` and `client.py`, flipping FR-043 through FR-052 to Implemented. Phase C implements ADR-013 (project bootstrap) in `setup_commands.py`, `cli.py`, and `usai_harness/templates/`, flipping FR-053 through FR-058 plus IR-006.
+The Proposed batch declared by Phase A of the 2026-04-28 sequence (FR-043 through FR-058 plus IR-006) is fully implemented as of the 0.2.0 release. Phase B landed ADR-011 (project config CWD discovery in `client.py`) and ADR-012 (model pool schema in `config.py` plus per-task validation in `client.py`). Phase C landed ADR-013 (`project-init` subcommand in `setup_commands.py`/`cli.py` plus the `usai_harness/templates/` package data). Phase D synced this RTM, the SRS, and the user-facing docs.
 
 ## 9. Maintenance
 

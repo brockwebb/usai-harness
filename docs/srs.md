@@ -1,8 +1,8 @@
 # Software Requirements Specification — usai-harness
 
-**Version:** 1.2
+**Version:** 1.3
 **Date:** 2026-04-28
-**Status:** Audited (Tasks 06-17 reflected; ADR-011/012/013 declared, awaiting Phases B/C)
+**Status:** Audited (0.2.0 release: ADR-011/012/013 implemented across Phases B and C)
 
 ## 1. Purpose and Scope
 
