@@ -63,21 +63,28 @@ class USAiClient:
     ):
         self.project = project
 
-        # 1. Config
+        # 1. Config (ADR-011: when config_path is None, discover usai_harness.yaml in CWD)
         self._loader = ConfigLoader()
-        if config_path is not None:
-            self.config: ProjectConfig = self._loader.load_project_config(config_path)
+        resolved_config_path = self._resolve_project_config_path(config_path)
+        if resolved_config_path is not None:
+            self.config: ProjectConfig = self._loader.load_project_config(
+                resolved_config_path,
+            )
         else:
             default_model = self._loader.get_default_model()
             self.config = ProjectConfig(
-                model=default_model,
+                models=[default_model],
+                default_model=default_model,
+                provider=default_model.provider,
                 max_tokens=default_model.max_output_tokens,
             )
 
         self._workers = workers if workers is not None else self.config.workers
 
         # 2. Credential provider (ADR-003, ADR-002).
-        provider_name = provider if provider is not None else self.config.model.provider
+        provider_name = (
+            provider if provider is not None else self.config.provider
+        )
         self._provider_config = self._loader.get_provider(provider_name)
         if (
             env_path is not None
@@ -120,9 +127,9 @@ class USAiClient:
 
         # 6. Cost Tracker
         self._cost_tracker = CostTracker(
-            model_name=self.config.model.name,
-            cost_per_1k_input=self.config.model.cost_per_1k_input_tokens,
-            cost_per_1k_output=self.config.model.cost_per_1k_output_tokens,
+            model_name=self.config.default_model.name,
+            cost_per_1k_input=self.config.default_model.cost_per_1k_input_tokens,
+            cost_per_1k_output=self.config.default_model.cost_per_1k_output_tokens,
             ledger_path=ledger_path if ledger_path is not None else Path("cost_ledger.jsonl"),
         )
 
@@ -131,7 +138,7 @@ class USAiClient:
 
         log.info(
             "USAi Harness initialized: project=%s model=%s workers=%d transport=%s",
-            project, self.config.model.name, self._workers, transport_backend,
+            project, self.config.default_model.name, self._workers, transport_backend,
         )
 
     # ---- single-call API --------------------------------------------------
@@ -152,9 +159,21 @@ class USAiClient:
         Retries up to MAX_COMPLETE_RETRIES on HTTP 429 with exponential backoff.
         Non-retryable errors and exhausted retries return the error body (still logged).
         """
-        model_name = model if model is not None else self.config.model.name
+        if model is not None and not self.config.has_model(model):
+            raise ValueError(
+                f"complete(): model {model!r} is not in this project's pool. "
+                f"Pool: {[m.name for m in self.config.models]}."
+            )
+
+        model_name = model if model is not None else self.config.default_model.name
+        chosen_model = self.config.get_pool_model(model_name)
+
         temp = temperature if temperature is not None else self.config.temperature
+        if temperature is not None:
+            self._validate_temperature_for_model(temp, chosen_model, "complete()")
         mt = max_tokens if max_tokens is not None else self.config.max_tokens
+        if max_tokens is not None:
+            self._validate_max_tokens_for_model(mt, chosen_model, "complete()")
         sp = system_prompt if system_prompt is not None else self.config.system_prompt
 
         if task_id is None:
@@ -266,7 +285,7 @@ class USAiClient:
             job_id=self._logger.job_id,
             job_name=job_name,
             project=self.project,
-            model=self.config.model.name,
+            model=self.config.default_model.name,
             duration_seconds=duration,
         )
 
@@ -287,9 +306,33 @@ class USAiClient:
                 raise ValueError(
                     f"Task at index {i} is missing required 'messages' field."
                 )
+
+            if "model" in t:
+                if not self.config.has_model(t["model"]):
+                    raise ValueError(
+                        f"Task at index {i} (task_id={t.get('task_id')!r}) "
+                        f"selects model {t['model']!r} which is not in the "
+                        f"project's pool. "
+                        f"Pool: {[m.name for m in self.config.models]}."
+                    )
+                chosen_model = self.config.get_pool_model(t["model"])
+            else:
+                chosen_model = self.config.default_model
+
+            if "temperature" in t:
+                self._validate_temperature_for_model(
+                    float(t["temperature"]), chosen_model,
+                    f"task index {i}",
+                )
+            if "max_tokens" in t:
+                self._validate_max_tokens_for_model(
+                    int(t["max_tokens"]), chosen_model,
+                    f"task index {i}",
+                )
+
             payload = {
                 "messages": t["messages"],
-                "model": t.get("model", self.config.model.name),
+                "model": t.get("model", self.config.default_model.name),
                 "temperature": t.get("temperature", self.config.temperature),
                 "max_tokens": t.get("max_tokens", self.config.max_tokens),
                 "system_prompt": t.get("system_prompt", self.config.system_prompt),
@@ -304,6 +347,36 @@ class USAiClient:
                 metadata=t.get("metadata", {}),
             ))
         return out
+
+    @staticmethod
+    def _validate_temperature_for_model(
+        value: float, model, context: str,
+    ) -> None:
+        if not model.supports_temperature:
+            raise ValueError(
+                f"{context}: model '{model.name}' does not support "
+                f"temperature; got temperature={value}."
+            )
+        low, high = model.temperature_range
+        if not (low <= value <= high):
+            raise ValueError(
+                f"{context}: temperature={value} out of range for model "
+                f"'{model.name}'. Valid range: [{low}, {high}]."
+            )
+
+    @staticmethod
+    def _validate_max_tokens_for_model(
+        value: int, model, context: str,
+    ) -> None:
+        if value <= 0:
+            raise ValueError(
+                f"{context}: max_tokens must be > 0, got {value}."
+            )
+        if value > model.max_output_tokens:
+            raise ValueError(
+                f"{context}: max_tokens={value} exceeds model "
+                f"'{model.name}' limit of {model.max_output_tokens}."
+            )
 
     async def _make_request(self, payload: dict) -> tuple[dict, int]:
         """request_fn handed to the worker pool."""
@@ -374,7 +447,7 @@ class USAiClient:
         result: TaskResult,
         log_content: bool = False,
     ) -> None:
-        model = result.payload.get("model", self.config.model.name)
+        model = result.payload.get("model", self.config.default_model.name)
         response = result.response if isinstance(result.response, dict) else {}
         usage = response.get("usage") if isinstance(response.get("usage"), dict) else {}
         model_returned = response.get("model") if isinstance(response, dict) else None
@@ -403,6 +476,26 @@ class USAiClient:
             entry["response"] = result.response
         self._logger.log_call(entry)
         self._cost_tracker.record_call(response, success=result.success)
+
+    # ---- helpers ----------------------------------------------------------
+
+    @staticmethod
+    def _resolve_project_config_path(
+        config_path: Optional[Path],
+    ) -> Optional[Path]:
+        """Apply the ADR-011 discovery rule.
+
+        - If `config_path` is supplied, use it (FR-044).
+        - Otherwise, look for `usai_harness.yaml` in the current working
+          directory (FR-043). When absent, return None and let the caller
+          fall back to default ProjectConfig (FR-045).
+        """
+        if config_path is not None:
+            return Path(config_path)
+        cwd_default = Path.cwd() / "usai_harness.yaml"
+        if cwd_default.exists():
+            return cwd_default
+        return None
 
     # ---- lifecycle --------------------------------------------------------
 

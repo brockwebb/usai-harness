@@ -76,7 +76,7 @@ def test_load_project_config_valid(tmp_path):
     pc = loader.load_project_config(cfg)
 
     assert isinstance(pc, ProjectConfig)
-    assert pc.model.name == "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
+    assert pc.default_model.name == "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
     assert pc.temperature == 0.7
     assert pc.max_tokens == 4096
     assert pc.system_prompt == "You are a helpful assistant."
@@ -92,7 +92,7 @@ def test_project_config_defaults(tmp_path):
     pc = loader.load_project_config(cfg)
 
     assert pc.temperature == 0.0
-    assert pc.max_tokens == pc.model.max_output_tokens
+    assert pc.max_tokens == pc.default_model.max_output_tokens
     assert pc.workers == 3
     assert pc.batch_size == 50
     assert pc.system_prompt is None
@@ -169,7 +169,7 @@ def test_unknown_fields_warns(tmp_path, caplog):
     caplog.set_level(logging.WARNING, logger="usai_harness.config")
     pc = loader.load_project_config(cfg)
 
-    assert pc.model.name == "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
+    assert pc.default_model.name == "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings, "expected a WARNING for unknown field"
     assert any("foo" in r.getMessage() for r in warnings)
@@ -703,3 +703,157 @@ def test_error_body_snippet_max_chars_non_integer_raises(tmp_path):
     path = _write_models_yaml(tmp_path, yaml_body)
     with pytest.raises(ConfigValidationError, match="positive integer"):
         ConfigLoader(models_config_path=path)
+
+
+# ---------- model pool schema (ADR-012, FR-046..052) ----------------------
+
+
+def test_project_config_pool_one_member(tmp_path):
+    """Single-member pool with default_model omitted; that member is the default."""
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: claude-sonnet-4-5-20241022
+    """)
+    pc = loader.load_project_config(cfg)
+
+    assert [m.name for m in pc.models] == ["claude-sonnet-4-5-20241022"]
+    assert pc.default_model.name == "claude-sonnet-4-5-20241022"
+    assert pc.provider == "usai"
+
+
+def test_project_config_pool_multiple_members_with_default(tmp_path):
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: claude-sonnet-4-5-20241022
+          - name: claude-opus-4-5-20250521
+          - name: gemini-2.5-flash
+        default_model: claude-opus-4-5-20250521
+    """)
+    pc = loader.load_project_config(cfg)
+
+    assert {m.name for m in pc.models} == {
+        "claude-sonnet-4-5-20241022",
+        "claude-opus-4-5-20250521",
+        "gemini-2.5-flash",
+    }
+    assert pc.default_model.name == "claude-opus-4-5-20250521"
+
+
+def test_project_config_pool_missing_default_with_multiple(tmp_path):
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: claude-sonnet-4-5-20241022
+          - name: claude-opus-4-5-20250521
+    """)
+    with pytest.raises(ConfigValidationError, match="default_model"):
+        loader.load_project_config(cfg)
+
+
+def test_project_config_pool_unknown_model(tmp_path):
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: claude-sonnet-4-5-20241022
+          - name: nonexistent-model-xyz
+        default_model: claude-sonnet-4-5-20241022
+    """)
+    with pytest.raises(ConfigValidationError) as exc:
+        loader.load_project_config(cfg)
+    msg = str(exc.value)
+    assert "nonexistent-model-xyz" in msg
+
+
+def test_project_config_pool_provider_mismatch(tmp_path):
+    """Top-level provider must match every pool member's provider field."""
+    yaml_body = textwrap.dedent("""
+        providers:
+          usai:
+            base_url: https://example.com/api/v1
+            api_key_env: USAI_API_KEY
+          alpha:
+            base_url: https://alpha.example.com/v1
+            api_key_env: ALPHA_API_KEY
+
+        models:
+          model-on-usai:
+            provider: usai
+            context_window: 1000
+            max_output_tokens: 100
+            supports_temperature: true
+            temperature_range: [0.0, 1.0]
+            supports_system_prompt: true
+            cost_per_1k_input_tokens: 0.0
+            cost_per_1k_output_tokens: 0.0
+
+          model-on-alpha:
+            provider: alpha
+            context_window: 1000
+            max_output_tokens: 100
+            supports_temperature: true
+            temperature_range: [0.0, 1.0]
+            supports_system_prompt: true
+            cost_per_1k_input_tokens: 0.0
+            cost_per_1k_output_tokens: 0.0
+
+        default_model: model-on-usai
+    """).lstrip()
+    cat_path = _write_models_yaml(tmp_path, yaml_body)
+    loader = ConfigLoader(models_config_path=cat_path)
+
+    cfg = _write_project_config(tmp_path, """
+        provider: usai
+        models:
+          - name: model-on-usai
+          - name: model-on-alpha
+        default_model: model-on-usai
+    """)
+    with pytest.raises(ConfigValidationError, match="Cross-provider"):
+        loader.load_project_config(cfg)
+
+
+def test_project_config_pool_temperature_out_of_range(tmp_path):
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: claude-sonnet-4-5-20241022
+            temperature: 5.0
+    """)
+    with pytest.raises(ConfigValidationError, match="out of range"):
+        loader.load_project_config(cfg)
+
+
+def test_project_config_pool_max_tokens_out_of_range(tmp_path):
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: claude-sonnet-4-5-20241022
+            max_tokens: 999999
+    """)
+    with pytest.raises(ConfigValidationError, match="exceeds"):
+        loader.load_project_config(cfg)
+
+
+def test_project_config_legacy_single_model(tmp_path):
+    """Legacy `model:` form translates to a one-element pool."""
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        model: claude-sonnet-4-5-20241022
+    """)
+    pc = loader.load_project_config(cfg)
+
+    assert [m.name for m in pc.models] == ["claude-sonnet-4-5-20241022"]
+    assert pc.default_model.name == "claude-sonnet-4-5-20241022"
+
+
+def test_project_config_both_model_and_models_keys(tmp_path):
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        model: claude-sonnet-4-5-20241022
+        models:
+          - name: claude-sonnet-4-5-20241022
+    """)
+    with pytest.raises(ConfigValidationError, match="legacy"):
+        loader.load_project_config(cfg)

@@ -39,7 +39,8 @@ DEFAULT_ERROR_BODY_SNIPPET_MAX_CHARS = 200
 MAX_ERROR_BODY_SNIPPET_MAX_CHARS = 2000
 
 _KNOWN_PROJECT_FIELDS = frozenset({
-    "model", "temperature", "max_tokens",
+    "model", "models", "default_model", "provider",
+    "temperature", "max_tokens",
     "system_prompt", "workers", "batch_size",
     "credentials",
 })
@@ -85,15 +86,42 @@ class ProviderConfig:
 
 @dataclass
 class ProjectConfig:
-    """Validated project-level configuration."""
-    model: ModelConfig
+    """Validated project-level configuration.
+
+    Per ADR-012, a project carries a pool of models. `default_model` is the
+    pool member used when a task does not select a model explicitly. `provider`
+    is the endpoint provider; every pool member's catalog `provider` field
+    must equal this value (cross-provider pools are rejected).
+
+    `temperature`, `max_tokens`, and `system_prompt` are project-level defaults
+    used when a task does not override them. They are validated against the
+    `default_model`'s catalog ranges. Per-task overrides are validated against
+    the *task's chosen model* at call time (FR-049, FR-050).
+    """
+    models: list[ModelConfig]
+    default_model: ModelConfig
+    provider: str
     temperature: float = 0.0
-    max_tokens: Optional[int] = None  # defaults to model's max_output_tokens
+    max_tokens: Optional[int] = None
     system_prompt: Optional[str] = None
     workers: int = DEFAULT_WORKERS
     batch_size: int = DEFAULT_BATCH_SIZE
     credentials_backend: str = "dotenv"
     credentials_kwargs: dict = field(default_factory=dict)
+
+    def has_model(self, name: str) -> bool:
+        """Return True when `name` is a pool member."""
+        return any(m.name == name for m in self.models)
+
+    def get_pool_model(self, name: str) -> ModelConfig:
+        """Return the pool member with the given name, or raise ConfigValidationError."""
+        for m in self.models:
+            if m.name == name:
+                return m
+        raise ConfigValidationError(
+            f"Model '{name}' is not in the project's pool. "
+            f"Pool members: {[m.name for m in self.models]}."
+        )
 
 
 def _load_user_catalog(
@@ -399,7 +427,7 @@ class ConfigLoader:
         return self._models[self._default_model_name]
 
     def load_project_config(self, config_path) -> ProjectConfig:
-        """Load, validate, and return a project-specific config."""
+        """Load, validate, and return a project-specific config (ADR-011, ADR-012)."""
         config_path = Path(config_path)
         try:
             raw = yaml.safe_load(config_path.read_text())
@@ -413,50 +441,65 @@ class ConfigLoader:
                 f"Project config {config_path} must be a YAML mapping."
             )
 
-        model_name = raw.get("model")
-        if not model_name:
-            raise ConfigValidationError(
-                f"Project config {config_path} is missing required field 'model'. "
-                f"Available models: {sorted(self._models)}."
-            )
-        model = self.get_model(model_name)
-
         for unknown in sorted(set(raw.keys()) - _KNOWN_PROJECT_FIELDS):
             log.warning(
-                "Unknown field '%s' in project config %s — ignoring. "
+                "Unknown field '%s' in project config %s; ignoring. "
                 "Valid fields: %s.",
                 unknown, config_path, sorted(_KNOWN_PROJECT_FIELDS),
             )
 
-        temperature = 0.0
-        if "temperature" in raw:
-            temperature = float(raw["temperature"])
-            if not model.supports_temperature:
-                raise ConfigValidationError(
-                    f"Model '{model.name}' does not support a temperature "
-                    f"parameter, but project config sets temperature={temperature}."
-                )
-            low, high = model.temperature_range
-            if not (low <= temperature <= high):
-                raise ConfigValidationError(
-                    f"temperature={temperature} out of range for model "
-                    f"'{model.name}'. Valid range: [{low}, {high}]."
-                )
+        pool_specs, default_model_name = self._collect_pool_specs(raw, config_path)
+        pool = self._validate_pool(pool_specs, config_path)
 
-        max_tokens = raw.get("max_tokens")
-        if max_tokens is not None:
-            max_tokens = int(max_tokens)
-            if max_tokens <= 0:
+        if default_model_name is None:
+            if len(pool) == 1:
+                default_model = pool[0]
+            else:
                 raise ConfigValidationError(
-                    f"max_tokens must be > 0, got {max_tokens}."
-                )
-            if max_tokens > model.max_output_tokens:
-                raise ConfigValidationError(
-                    f"max_tokens={max_tokens} exceeds model '{model.name}' "
-                    f"limit of {model.max_output_tokens}."
+                    f"Project config {config_path} declares {len(pool)} "
+                    f"pool members; 'default_model' is required when the "
+                    f"pool has more than one member."
                 )
         else:
-            max_tokens = model.max_output_tokens
+            try:
+                default_model = next(m for m in pool if m.name == default_model_name)
+            except StopIteration:
+                raise ConfigValidationError(
+                    f"Project config {config_path}: default_model "
+                    f"'{default_model_name}' is not a pool member. "
+                    f"Pool: {[m.name for m in pool]}."
+                ) from None
+
+        explicit_provider = raw.get("provider")
+        if explicit_provider is not None:
+            mismatched = [
+                m.name for m in pool if m.provider != explicit_provider
+            ]
+            if mismatched:
+                raise ConfigValidationError(
+                    f"Project config {config_path}: 'provider' is "
+                    f"'{explicit_provider}' but pool members "
+                    f"{mismatched} use different providers. Cross-provider "
+                    f"pools are not supported (ADR-012)."
+                )
+            provider = explicit_provider
+        else:
+            providers_in_pool = {m.provider for m in pool}
+            if len(providers_in_pool) > 1:
+                raise ConfigValidationError(
+                    f"Project config {config_path}: pool members use "
+                    f"multiple providers {sorted(providers_in_pool)}. "
+                    f"Declare a top-level 'provider:' or split into one "
+                    f"client per provider."
+                )
+            provider = next(iter(providers_in_pool))
+
+        temperature = self._validate_project_temperature(
+            raw, default_model, config_path,
+        )
+        max_tokens = self._validate_project_max_tokens(
+            raw, default_model, config_path,
+        )
 
         workers = int(raw.get("workers", DEFAULT_WORKERS))
         if not (1 <= workers <= MAX_WORKERS):
@@ -488,7 +531,9 @@ class ConfigLoader:
         }
 
         return ProjectConfig(
-            model=model,
+            models=pool,
+            default_model=default_model,
+            provider=provider,
             temperature=temperature,
             max_tokens=max_tokens,
             system_prompt=raw.get("system_prompt"),
@@ -497,6 +542,158 @@ class ConfigLoader:
             credentials_backend=credentials_backend,
             credentials_kwargs=credentials_kwargs,
         )
+
+    def _collect_pool_specs(
+        self, raw: dict, config_path: Path,
+    ) -> tuple[list[dict], Optional[str]]:
+        """Return (list of {name, overrides...}, default_model_name_or_None).
+
+        Translates the legacy single-`model:` form into a one-element pool.
+        Rejects configs that declare both `model` and `models`.
+        """
+        has_legacy = "model" in raw
+        has_pool = "models" in raw
+
+        if has_legacy and has_pool:
+            raise ConfigValidationError(
+                f"Project config {config_path} declares both 'model' "
+                f"(legacy single-model form) and 'models' (pool form). "
+                f"Use one or the other; the legacy form is auto-translated."
+            )
+
+        if has_legacy:
+            legacy_name = raw["model"]
+            if not isinstance(legacy_name, str) or not legacy_name:
+                raise ConfigValidationError(
+                    f"Project config {config_path}: 'model' must be a "
+                    f"non-empty string in the legacy form."
+                )
+            return [{"name": legacy_name}], legacy_name
+
+        if not has_pool:
+            raise ConfigValidationError(
+                f"Project config {config_path} is missing the required "
+                f"'models' field (or the legacy single 'model' field). "
+                f"Available models: {sorted(self._models)}."
+            )
+
+        pool_raw = raw["models"]
+        if not isinstance(pool_raw, list) or not pool_raw:
+            raise ConfigValidationError(
+                f"Project config {config_path}: 'models' must be a "
+                f"non-empty list of pool members."
+            )
+
+        specs: list[dict] = []
+        for i, member in enumerate(pool_raw):
+            if isinstance(member, str):
+                specs.append({"name": member})
+                continue
+            if not isinstance(member, dict) or "name" not in member:
+                raise ConfigValidationError(
+                    f"Project config {config_path}: pool member at index "
+                    f"{i} must be a string or a mapping with a 'name' key."
+                )
+            specs.append(dict(member))
+
+        return specs, raw.get("default_model")
+
+    def _validate_pool(
+        self, specs: list[dict], config_path: Path,
+    ) -> list[ModelConfig]:
+        """Resolve each pool member to a ModelConfig and validate per-member overrides.
+
+        Per-member `temperature` and `max_tokens` overrides are checked against
+        that member's catalog ranges (FR-049). Stored overrides are not part of
+        the runtime today; this is validation-only behavior.
+        """
+        seen: set[str] = set()
+        resolved: list[ModelConfig] = []
+        for spec in specs:
+            name = spec["name"]
+            if name in seen:
+                raise ConfigValidationError(
+                    f"Project config {config_path}: pool contains duplicate "
+                    f"model '{name}'."
+                )
+            seen.add(name)
+            try:
+                model = self.get_model(name)
+            except ConfigValidationError as e:
+                raise ConfigValidationError(
+                    f"Project config {config_path}: pool member '{name}' "
+                    f"is not in the merged catalog. {e}"
+                ) from e
+            resolved.append(model)
+
+            if "temperature" in spec:
+                self._check_temperature(
+                    float(spec["temperature"]), model, config_path,
+                    context=f"pool member '{name}'",
+                )
+            if "max_tokens" in spec:
+                self._check_max_tokens(
+                    int(spec["max_tokens"]), model, config_path,
+                    context=f"pool member '{name}'",
+                )
+
+        return resolved
+
+    @staticmethod
+    def _check_temperature(
+        value: float, model: ModelConfig, config_path: Path, context: str,
+    ) -> None:
+        if not model.supports_temperature:
+            raise ConfigValidationError(
+                f"Project config {config_path}: model '{model.name}' "
+                f"does not support a temperature parameter; "
+                f"{context} sets temperature={value}."
+            )
+        low, high = model.temperature_range
+        if not (low <= value <= high):
+            raise ConfigValidationError(
+                f"Project config {config_path}: temperature={value} out "
+                f"of range for {context} ('{model.name}'). "
+                f"Valid range: [{low}, {high}]."
+            )
+
+    @staticmethod
+    def _check_max_tokens(
+        value: int, model: ModelConfig, config_path: Path, context: str,
+    ) -> None:
+        if value <= 0:
+            raise ConfigValidationError(
+                f"Project config {config_path}: max_tokens must be > 0 "
+                f"({context}), got {value}."
+            )
+        if value > model.max_output_tokens:
+            raise ConfigValidationError(
+                f"Project config {config_path}: max_tokens={value} for "
+                f"{context} exceeds '{model.name}' limit of "
+                f"{model.max_output_tokens}."
+            )
+
+    def _validate_project_temperature(
+        self, raw: dict, default_model: ModelConfig, config_path: Path,
+    ) -> float:
+        if "temperature" not in raw:
+            return 0.0
+        value = float(raw["temperature"])
+        self._check_temperature(
+            value, default_model, config_path, context="project default",
+        )
+        return value
+
+    def _validate_project_max_tokens(
+        self, raw: dict, default_model: ModelConfig, config_path: Path,
+    ) -> int:
+        if "max_tokens" not in raw:
+            return default_model.max_output_tokens
+        value = int(raw["max_tokens"])
+        self._check_max_tokens(
+            value, default_model, config_path, context="project default",
+        )
+        return value
 
     def validate_request(self, model_config: ModelConfig,
                          prompt_tokens: int, max_tokens: int) -> None:

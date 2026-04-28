@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- `ProjectConfig` now declares a pool of models via the `models:` list field, plus a `default_model:` field selecting which pool member is used when a task does not specify (ADR-012). A new top-level `provider:` field is required when pool members come from multiple providers; cross-provider pools are rejected. Per-model `temperature` and `max_tokens` overrides validate against that member's catalog ranges, not the default model's.
+- `USAiClient` discovers `usai_harness.yaml` in the current working directory by default (ADR-011). An explicit `config_path=` continues to override the discovery rule. When neither is present, the client falls back to the catalog's default model with default `ProjectConfig` values.
+- New `ProjectConfig` helpers: `has_model(name)` and `get_pool_model(name)`.
+
+### Changed
+- `client.complete()` and `client.batch()` now validate per-call/per-task `model` and `temperature` overrides against the chosen pool member at call/task-build time. Tasks targeting a non-pool model raise `ValueError`; out-of-range temperatures raise with the offending value, model name, and valid range.
+- The legacy single-`model:` form in project configs is silently translated to a one-element pool. Configs declaring both `model:` and `models:` raise `ConfigValidationError`.
+
 ## [0.1.1] - 2026-04-27
 
 ### Added

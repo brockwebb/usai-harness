@@ -93,7 +93,7 @@ async def test_client_init_success(tmp_path, env_path):
     client = _client(tmp_path, env_path)
     try:
         assert client.project == "test-proj"
-        assert client.config.model.name == "claude-sonnet-4-5-20241022"
+        assert client.config.default_model.name == "claude-sonnet-4-5-20241022"
         assert (tmp_path / "logs").exists()
     finally:
         await client.close()
@@ -211,7 +211,7 @@ async def test_client_uses_project_config(tmp_path, env_path):
 async def test_client_defaults_without_config(tmp_path, env_path):
     client = _client(tmp_path, env_path)
     try:
-        assert client.config.model.name == "claude-sonnet-4-5-20241022"
+        assert client.config.default_model.name == "claude-sonnet-4-5-20241022"
         # base_url now comes from the providers block in models.yaml.
         assert client._base_url.startswith("https://")
         assert client._api_key == "test-key-AAAAAAAA"
@@ -332,3 +332,94 @@ async def test_complete_exception_is_redacted(tmp_path, env_path):
     entries = [json.loads(l) for l in log_path.read_text().splitlines() if l.strip()]
     assert "abc123def456ghi789" not in entries[0]["error"]
     assert "REDACTED" in entries[0]["error"]
+
+
+# ---------- Pool validation (ADR-012, FR-050) -----------------------------
+
+
+def _multi_pool_config(tmp_path: Path) -> Path:
+    cfg = tmp_path / "project.yaml"
+    cfg.write_text(textwrap.dedent("""
+        models:
+          - name: claude-sonnet-4-5-20241022
+          - name: claude-opus-4-5-20250521
+          - name: claude-3-5-haiku-20241022
+        default_model: claude-sonnet-4-5-20241022
+    """).lstrip())
+    return cfg
+
+
+async def test_client_complete_with_pool_member_model(tmp_path, env_path):
+    cfg = _multi_pool_config(tmp_path)
+    mock = MockTransport()
+    client = _client(tmp_path, env_path, transport=mock, config_path=cfg)
+    try:
+        await client.complete(
+            messages=[{"role": "user", "content": "hi"}],
+            model="claude-opus-4-5-20250521",
+        )
+    finally:
+        await client.close()
+    assert mock.calls[0]["model"] == "claude-opus-4-5-20250521"
+
+
+async def test_client_complete_with_non_pool_model(tmp_path, env_path):
+    cfg = _multi_pool_config(tmp_path)
+    client = _client(tmp_path, env_path, config_path=cfg)
+    try:
+        with pytest.raises(ValueError, match="not in this project's pool"):
+            await client.complete(
+                messages=[{"role": "user", "content": "hi"}],
+                model="gemini-2.5-flash",
+            )
+    finally:
+        await client.close()
+
+
+async def test_client_batch_per_task_model_override(tmp_path, env_path, capsys):
+    cfg = _multi_pool_config(tmp_path)
+    mock = MockTransport()
+    client = _client(tmp_path, env_path, transport=mock, config_path=cfg)
+    try:
+        tasks = [
+            {"messages": [{"role": "user", "content": "a"}],
+             "model": "claude-sonnet-4-5-20241022", "task_id": "t1"},
+            {"messages": [{"role": "user", "content": "b"}],
+             "model": "claude-opus-4-5-20250521", "task_id": "t2"},
+        ]
+        await client.batch(tasks, job_name="pool-test")
+    finally:
+        await client.close()
+    capsys.readouterr()
+    used = sorted(c["model"] for c in mock.calls)
+    assert used == ["claude-opus-4-5-20250521", "claude-sonnet-4-5-20241022"]
+
+
+async def test_client_batch_per_task_invalid_model(tmp_path, env_path):
+    cfg = _multi_pool_config(tmp_path)
+    client = _client(tmp_path, env_path, config_path=cfg)
+    try:
+        tasks = [
+            {"messages": [{"role": "user", "content": "a"}],
+             "model": "gemini-2.5-flash", "task_id": "rogue"},
+        ]
+        with pytest.raises(ValueError, match="not in the project's pool"):
+            await client.batch(tasks, job_name="bad-pool")
+    finally:
+        await client.close()
+
+
+async def test_client_batch_per_task_temperature_validation(tmp_path, env_path):
+    """Per-task temperature must fall within the chosen model's range."""
+    # claude-sonnet-4-5-20241022 has temperature_range [0.0, 1.0] in models.yaml.
+    cfg = _multi_pool_config(tmp_path)
+    client = _client(tmp_path, env_path, config_path=cfg)
+    try:
+        tasks = [
+            {"messages": [{"role": "user", "content": "a"}],
+             "temperature": 5.0, "task_id": "hot"},
+        ]
+        with pytest.raises(ValueError, match="out of range"):
+            await client.batch(tasks, job_name="too-hot")
+    finally:
+        await client.close()
