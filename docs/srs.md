@@ -1,8 +1,8 @@
 # Software Requirements Specification — usai-harness
 
-**Version:** 1.1
-**Date:** 2026-04-25
-**Status:** Audited (Tasks 06-10 reflected)
+**Version:** 1.2
+**Date:** 2026-04-28
+**Status:** Audited (Tasks 06-17 reflected; ADR-011/012/013 declared, awaiting Phases B/C)
 
 ## 1. Purpose and Scope
 
@@ -229,6 +229,76 @@ Interactive subcommands that prompt for API keys shall use `getpass.getpass()` o
 When merging the seed model catalog with the user-level live catalog, the harness shall emit a WARN-level log entry listing any model identifiers present in the seed configuration but absent from the live catalog. The log entry shall include the live catalog file path. Models identified as missing shall be dropped from the runtime catalog per FR-040.
 *Source:* ADR-009 amendment, surfaced by Task 06.
 
+### 4.13 Project Configuration File Convention
+
+**FR-043: Default project config location.**
+The harness shall read project configuration from the file named `usai_harness.yaml` in the current working directory by default.
+*Source:* ADR-011.
+
+**FR-044: Explicit project config path override.**
+The harness shall accept an explicit project config path through the `config_path` keyword argument on `USAiClient` and through a `--config <path>` argument on every CLI subcommand that operates on a project config.
+*Source:* ADR-011.
+
+**FR-045: Absent project config fallback.**
+When no project config is found at the default location and no explicit path is supplied, the harness shall fall back to the catalog's default model and the default `ProjectConfig` values.
+*Source:* ADR-011.
+
+### 4.14 Model Pool Schema
+
+**FR-046: Model pool declaration.**
+A project config shall declare its model pool as a list under the key `models`. Each list entry shall name a model that exists in the merged catalog and may carry per-model overrides for `temperature`, `max_tokens`, and `system_prompt`.
+*Source:* ADR-012.
+
+**FR-047: Default model selection.**
+A project config shall name a default model under the key `default_model`. The default model shall be a member of the pool. When the pool contains exactly one member, `default_model` may be omitted and that single member shall serve as the default; when the pool contains more than one member, omitting `default_model` shall raise `ConfigValidationError` at load.
+*Source:* ADR-012.
+
+**FR-048: Pool catalog validation.**
+The config loader shall validate every pool member against the merged catalog at load time. Unknown models shall raise `ConfigValidationError` listing the model identifier and the available alternatives.
+*Source:* ADR-012.
+
+**FR-049: Per-model override validation.**
+Per-model `temperature` and `max_tokens` overrides in the pool shall be validated against the target model's catalog ranges, not against the default model's ranges. Out-of-range values shall raise `ConfigValidationError` at load.
+*Source:* ADR-012.
+
+**FR-050: Per-task model selection.**
+Tasks submitted to `client.batch()` and arguments to `client.complete()` may specify a `model` field naming any pool member. The harness shall validate the requested model is a pool member at task-build or call time and shall raise a clear error referencing the pool when it is not.
+*Source:* ADR-012.
+
+**FR-051: Cross-provider pool rejection.**
+A project config that declares `provider` at the top level shall reject pool members whose catalog entries name a different provider. Cross-provider pools shall raise `ConfigValidationError` at load.
+*Source:* ADR-012.
+
+**FR-052: Legacy single-model translation.**
+The config loader shall accept the legacy single-`model:` form and translate it silently to a one-element pool with that model as default. No deprecation warning shall be emitted in 0.2.0 since the harness has no external adopters at release time.
+*Source:* ADR-012.
+
+### 4.15 Project Bootstrap
+
+**FR-053: project-init subcommand.**
+The harness shall provide a CLI subcommand `usai-harness project-init` that creates a standard project layout in the current working directory.
+*Source:* ADR-013.
+
+**FR-054: project-init layout creation.**
+`project-init` shall create `usai_harness.yaml`, `output/`, `output/logs/`, `tevv/`, and `scripts/example_batch.py`, and shall append entries to `.gitignore` for the data files (`output/cost_ledger.jsonl`, `output/logs/`). Existing files shall not be overwritten and existing `.gitignore` entries shall not be duplicated.
+*Source:* ADR-013.
+
+**FR-055: project-init TEVV report.**
+`project-init` shall execute one TEVV smoke round-trip against the project's default model and shall write a markdown report to `tevv/init_report_<UTC_timestamp>.md`.
+*Source:* ADR-013.
+
+**FR-056: TEVV smoke test scope.**
+The TEVV smoke test shall send a trivial prompt, validate that the response succeeded with HTTP 2xx and that its content matches the expected sentinel, and verify that the cost ledger and call log received entries for the round-trip.
+*Source:* ADR-013.
+
+**FR-057: project-init exit code.**
+`project-init` shall exit 0 on TEVV pass and 1 on TEVV fail. A failed TEVV shall not roll back created files; the layout shall remain available for diagnosis and the report shall record the failure mode.
+*Source:* ADR-013.
+
+**FR-058: project-init idempotency.**
+Re-running `project-init` shall be safe: existing `usai_harness.yaml`, `scripts/example_batch.py`, and directories shall not be overwritten or duplicated, and the TEVV smoke test shall run on every invocation producing a fresh timestamped report under `tevv/`.
+*Source:* ADR-013.
+
 ## 5. Security Requirements
 
 **SEC-001: Secret redaction.**
@@ -272,6 +342,10 @@ Project configuration shall accept a `credentials` block selecting the backend, 
 **IR-005: Error body snippet configuration.**
 Configuration shall accept a top-level `error_body_snippet_max_chars` integer specifying the maximum character length of error response body snippets logged on failed calls (FR-027). The valid range shall be 1 through 2000 inclusive. The default shall be 200. Configurations specifying values outside this range shall be rejected at load.
 *Source:* ADR-007 (post-amendment).
+
+**IR-006: TEVV report contents.**
+The TEVV report written by `project-init` (FR-055) shall record harness version, Python version, OS platform string, project root absolute path, provider, default model, full model pool, prompt text, response status code, response latency in milliseconds, prompt token count, completion token count, total cost, response sample, ledger entry pointer, call-log entry pointer, and a PASS/FAIL verdict.
+*Source:* ADR-013.
 
 ## 7. Constraints and Assumptions
 
