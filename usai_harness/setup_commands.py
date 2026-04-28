@@ -8,6 +8,7 @@ endpoints or stdin/stdout.
 import getpass
 import os
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -575,3 +576,360 @@ def handle_ping(model: Optional[str] = None) -> int:
     except Exception as e:
         print(f"ping failed: {e}", file=sys.stderr)
         return 1
+
+
+# ---------- project-init (ADR-013, FR-053..058, IR-006) -----------------
+
+_TEVV_PROMPT = "Reply with the word OK."
+_TEVV_EXPECTED_TOKEN = "ok"
+
+
+def _read_template(name: str) -> str:
+    """Load a packaged template file from `usai_harness/templates/`."""
+    import importlib.resources as _resources
+
+    return (
+        _resources.files("usai_harness.templates")
+        .joinpath(name)
+        .read_text(encoding="utf-8")
+    )
+
+
+def _render_project_template(template_name: str, **subs: str) -> str:
+    """Read a template and substitute `{key}` placeholders with the given values."""
+    text = _read_template(template_name)
+    for key, val in subs.items():
+        text = text.replace("{" + key + "}", str(val))
+    return text
+
+
+def _ensure_dir(path: Path) -> bool:
+    """Create directory if missing. Return True if it was newly created."""
+    existed = path.exists()
+    path.mkdir(parents=True, exist_ok=True)
+    return not existed
+
+
+def _append_gitignore_lines(
+    gitignore_path: Path, lines: list[str],
+) -> list[str]:
+    """Append lines to .gitignore that are not already present (line-stripped equality)."""
+    existing: list[str] = []
+    if gitignore_path.exists():
+        existing = [
+            line.strip()
+            for line in gitignore_path.read_text(encoding="utf-8").splitlines()
+        ]
+    appended: list[str] = []
+    for raw in lines:
+        stripped = raw.strip()
+        if stripped and stripped not in existing:
+            appended.append(raw)
+    if appended:
+        with gitignore_path.open("a", encoding="utf-8") as f:
+            if existing and existing[-1] != "":
+                f.write("\n")
+            for line in appended:
+                f.write(line.rstrip("\n") + "\n")
+    return appended
+
+
+def _create_project_layout(
+    root: Path,
+    project_name: str,
+    provider_name: str,
+    default_model_name: str,
+) -> list[tuple[str, str]]:
+    """Render templates and write files; existing files are left in place.
+
+    Returns a list of (action, path) describing what changed for the caller's
+    summary print. Idempotent across repeated runs.
+    """
+    actions: list[tuple[str, str]] = []
+
+    for sub in ("output", "output/logs", "tevv", "scripts", "inputs", "outputs"):
+        target = root / sub
+        actions.append(
+            ("created dir" if _ensure_dir(target) else "dir exists",
+             str(target)),
+        )
+
+    cfg_path = root / "usai_harness.yaml"
+    if cfg_path.exists():
+        actions.append(("config exists, leaving alone", str(cfg_path)))
+    else:
+        cfg_text = _render_project_template(
+            "usai_harness.yaml.template",
+            project_name=project_name,
+            provider_name=provider_name,
+            default_model_name=default_model_name,
+        )
+        cfg_path.write_text(cfg_text, encoding="utf-8")
+        actions.append(("created config", str(cfg_path)))
+
+    script_path = root / "scripts" / "example_batch.py"
+    if script_path.exists():
+        actions.append(("example exists, leaving alone", str(script_path)))
+    else:
+        script_path.write_text(
+            _render_project_template("example_batch.py.template"),
+            encoding="utf-8",
+        )
+        actions.append(("created example", str(script_path)))
+
+    gitignore_text = _read_template("gitignore_entries.txt")
+    gitignore_lines = gitignore_text.splitlines()
+    gitignore_path = root / ".gitignore"
+    appended = _append_gitignore_lines(gitignore_path, gitignore_lines)
+    if appended:
+        actions.append(
+            (f"appended {len(appended)} gitignore line(s)", str(gitignore_path)),
+        )
+    else:
+        actions.append(
+            ("gitignore already covers harness paths", str(gitignore_path)),
+        )
+
+    return actions
+
+
+async def _run_tevv_smoke_test(
+    project_root: Path,
+    project_name: str,
+    default_model,
+    transport=None,
+) -> dict:
+    """One round-trip via batch() against the project's default model."""
+    from usai_harness.client import USAiClient
+
+    started_at = datetime.now(timezone.utc)
+    error_msg: Optional[str] = None
+    status_code: Optional[int] = None
+    latency_ms: Optional[float] = None
+    prompt_tokens: Optional[int] = None
+    completion_tokens: Optional[int] = None
+    response_sample: str = ""
+    log_path: Optional[Path] = None
+    ledger_path: Optional[Path] = None
+
+    client_kwargs: dict = {
+        "project": project_name,
+        "log_dir": project_root / "output" / "logs",
+        "ledger_path": project_root / "output" / "cost_ledger.jsonl",
+    }
+    if transport is not None:
+        client_kwargs["transport"] = transport
+
+    try:
+        client = USAiClient(**client_kwargs)
+        try:
+            results = await client.batch(
+                tasks=[{
+                    "messages": [{"role": "user", "content": _TEVV_PROMPT}],
+                    "task_id": "tevv_smoke",
+                    "max_tokens": 64,
+                }],
+                job_name="project-init-tevv",
+            )
+        finally:
+            log_path = client._logger.get_log_path()
+            ledger_path = client._cost_tracker.ledger_path
+            await client.close()
+
+        if results:
+            r = results[0]
+            status_code = r.status_code
+            latency_ms = r.latency_ms
+            usage = (r.response or {}).get("usage") or {}
+            prompt_tokens = usage.get("prompt_tokens")
+            completion_tokens = usage.get("completion_tokens")
+            try:
+                response_sample = (
+                    (r.response or {})
+                    .get("choices", [{}])[0]
+                    .get("message", {})
+                    .get("content", "")
+                ) or ""
+                response_sample = response_sample[:200]
+            except Exception:
+                response_sample = ""
+    except Exception as e:
+        error_msg = f"{type(e).__name__}: {e}"
+
+    verdict = "PASS"
+    failure_detail: Optional[str] = None
+    if error_msg:
+        verdict = "FAIL"
+        failure_detail = f"smoke-test exception: {error_msg}"
+    elif status_code is None or not (200 <= int(status_code) < 300):
+        verdict = "FAIL"
+        failure_detail = f"non-2xx status from endpoint: {status_code}"
+    elif _TEVV_EXPECTED_TOKEN not in response_sample.lower():
+        verdict = "FAIL"
+        failure_detail = (
+            f"response did not contain '{_TEVV_EXPECTED_TOKEN}': "
+            f"{response_sample!r}"
+        )
+    elif log_path is None or not Path(log_path).exists() or Path(log_path).stat().st_size == 0:
+        verdict = "FAIL"
+        failure_detail = "call log was not written"
+    elif ledger_path is None or not Path(ledger_path).exists() or Path(ledger_path).stat().st_size == 0:
+        verdict = "FAIL"
+        failure_detail = "cost ledger was not written"
+
+    cost = 0.0
+    if prompt_tokens is not None and completion_tokens is not None:
+        cost = (
+            (prompt_tokens / 1000.0) * default_model.cost_per_1k_input_tokens
+            + (completion_tokens / 1000.0) * default_model.cost_per_1k_output_tokens
+        )
+
+    return {
+        "verdict": verdict,
+        "started_at": started_at,
+        "status_code": status_code,
+        "latency_ms": latency_ms,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "cost": cost,
+        "response_sample": response_sample,
+        "failure_detail": failure_detail,
+        "log_path": str(log_path) if log_path else None,
+        "ledger_path": str(ledger_path) if ledger_path else None,
+    }
+
+
+def _write_tevv_report(
+    project_root: Path,
+    project_name: str,
+    default_model,
+    pool_names: list[str],
+    smoke_result: dict,
+) -> Path:
+    """Write the markdown TEVV report for this run."""
+    import platform as _platform
+
+    from usai_harness import __version__
+
+    started_at = smoke_result["started_at"]
+    timestamp = started_at.strftime("%Y%m%dT%H%M%SZ")
+    report_dir = project_root / "tevv"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / f"init_report_{timestamp}.md"
+
+    lines: list[str] = []
+    lines.append(f"# TEVV Report: {project_name}")
+    lines.append(f"**Date (UTC):** {started_at.isoformat()}")
+    lines.append(f"**Verdict:** {smoke_result['verdict']}")
+    lines.append("")
+    lines.append("## Environment")
+    lines.append(f"- Harness version: {__version__}")
+    lines.append(f"- Python: {_platform.python_version()}")
+    lines.append(f"- OS: {_platform.platform()}")
+    lines.append(f"- Project root: {project_root}")
+    lines.append("")
+    lines.append("## Configuration")
+    lines.append(f"- Provider: {default_model.provider}")
+    lines.append(f"- Default model: {default_model.name}")
+    lines.append(f"- Model pool: {pool_names}")
+    lines.append("")
+    lines.append("## Smoke Test")
+    lines.append(f'- Prompt: "{_TEVV_PROMPT}"')
+    lines.append(f"- Status: {smoke_result['status_code']}")
+    if smoke_result["latency_ms"] is not None:
+        lines.append(f"- Latency: {smoke_result['latency_ms']:.0f} ms")
+    else:
+        lines.append("- Latency: n/a")
+    lines.append(f"- Prompt tokens: {smoke_result['prompt_tokens']}")
+    lines.append(f"- Completion tokens: {smoke_result['completion_tokens']}")
+    lines.append(f"- Cost (USD): {smoke_result['cost']:.6f}")
+    lines.append(f'- Response sample: "{smoke_result["response_sample"]}"')
+    lines.append("")
+    if smoke_result["verdict"] == "PASS":
+        lines.append("## Verdict")
+        lines.append(
+            "PASS — round-trip succeeded, cost ledger updated, call log updated."
+        )
+    else:
+        lines.append("## Failure")
+        lines.append(smoke_result.get("failure_detail") or "(no detail)")
+    lines.append("")
+    lines.append("## Provenance")
+    lines.append(f"- Cost ledger entry: {smoke_result['ledger_path']}")
+    lines.append(f"- Call log entry: {smoke_result['log_path']}")
+    lines.append("")
+
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return report_path
+
+
+def handle_project_init(transport=None) -> int:
+    """Bootstrap the current directory as a USAi Harness project (ADR-013).
+
+    Creates the standard layout (`usai_harness.yaml`, `output/`, `tevv/`,
+    `scripts/example_batch.py`) and runs a single TEVV smoke round-trip
+    against the project's default model. Writes a markdown report to
+    `tevv/init_report_<utc_timestamp>.md`. Returns 0 on TEVV pass, 1 on fail.
+    """
+    import asyncio
+
+    from usai_harness.config import ConfigLoader, ConfigValidationError
+
+    project_root = Path.cwd()
+    project_name = project_root.name
+
+    loader = ConfigLoader()
+    try:
+        default_model = loader.get_default_model()
+    except ConfigValidationError as e:
+        print(
+            f"Cannot bootstrap: no default model resolved from the harness "
+            f"catalog. Run 'usai-harness init' first to register a provider. "
+            f"({e})",
+            file=sys.stderr,
+        )
+        return 1
+
+    print("USAi Harness project-init")
+    print(f"  Project root: {project_root}")
+    print(f"  Project name: {project_name}")
+    print(
+        f"  Default model: {default_model.name} "
+        f"(provider {default_model.provider})"
+    )
+    print()
+
+    actions = _create_project_layout(
+        root=project_root,
+        project_name=project_name,
+        provider_name=default_model.provider,
+        default_model_name=default_model.name,
+    )
+    for action, path in actions:
+        print(f"  {action}: {path}")
+    print()
+
+    print(f"  Running TEVV smoke test against {default_model.name}...")
+    smoke_result = asyncio.run(_run_tevv_smoke_test(
+        project_root=project_root,
+        project_name=project_name,
+        default_model=default_model,
+        transport=transport,
+    ))
+
+    report_path = _write_tevv_report(
+        project_root=project_root,
+        project_name=project_name,
+        default_model=default_model,
+        pool_names=[default_model.name],
+        smoke_result=smoke_result,
+    )
+    print(f"  TEVV report: {report_path}")
+    print(f"  Verdict: {smoke_result['verdict']}")
+    if smoke_result["verdict"] == "FAIL":
+        print(
+            f"  Failure: {smoke_result['failure_detail']}",
+            file=sys.stderr,
+        )
+
+    return 0 if smoke_result["verdict"] == "PASS" else 1

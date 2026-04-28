@@ -1,0 +1,23 @@
+# Project configuration for the USAi Harness.
+# See the README and `docs/api-reference.md` for the full schema reference.
+
+project: {project_name}
+provider: {provider_name}
+
+# Pool of models available to this project.
+# Add or remove entries as needed. Each name must exist in the harness catalog
+# (run `usai-harness discover-models` to refresh the catalog from the live endpoint).
+models:
+  - name: {default_model_name}
+    # Optional per-model overrides; uncomment and set as needed.
+    # temperature: 0
+    # max_tokens: 4096
+
+default_model: {default_model_name}
+
+# Concurrency: number of async workers pulling from the request queue.
+workers: 3
+
+# Output paths (relative to project root or absolute).
+ledger_path: output/cost_ledger.jsonl
+log_dir: output/logs

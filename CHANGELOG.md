@@ -7,6 +7,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 ## [Unreleased]
 
 ### Added
+- New CLI subcommand `usai-harness project-init` that creates a standard project layout (`usai_harness.yaml`, `output/`, `output/logs/`, `tevv/`, `scripts/example_batch.py`) and runs a TEVV smoke round-trip against the project's default model (ADR-013). Idempotent: re-running leaves the config and example script in place, deduplicates `.gitignore` entries, and writes a fresh timestamped report under `tevv/`.
+- Templates directory `usai_harness/templates/` with starter project config and example script, packaged via `pyproject.toml [tool.setuptools.package-data]`.
+- TEVV report format: markdown reports written to `tevv/init_report_<UTC_timestamp>.md` capture harness version, Python and OS, project root, provider, default model, full pool, prompt, status code, latency, token counts, total cost, response sample, and a PASS/FAIL verdict (IR-006).
 - `ProjectConfig` now declares a pool of models via the `models:` list field, plus a `default_model:` field selecting which pool member is used when a task does not specify (ADR-012). A new top-level `provider:` field is required when pool members come from multiple providers; cross-provider pools are rejected. Per-model `temperature` and `max_tokens` overrides validate against that member's catalog ranges, not the default model's.
 - `USAiClient` discovers `usai_harness.yaml` in the current working directory by default (ADR-011). An explicit `config_path=` continues to override the discovery rule. When neither is present, the client falls back to the catalog's default model with default `ProjectConfig` values.
 - New `ProjectConfig` helpers: `has_model(name)` and `get_pool_model(name)`.

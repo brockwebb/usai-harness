@@ -1,0 +1,3 @@
+# USAi Harness output (per-run data, never commit)
+output/cost_ledger.jsonl
+output/logs/

@@ -35,6 +35,9 @@ usai-harness = "usai_harness.cli:cli_main"
 [tool.setuptools.packages.find]
 include = ["usai_harness*"]
 
+[tool.setuptools.package-data]
+"usai_harness.templates" = ["*.template", "*.txt"]
+
 [tool.pytest.ini_options]
 markers = [
     "integration: marks tests that require a live USAi endpoint (deselect with '-m \"not integration\"')",

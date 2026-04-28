@@ -21,6 +21,7 @@ from usai_harness.setup_commands import (
     handle_discover_models,
     handle_init,
     handle_ping,
+    handle_project_init,
     handle_verify,
 )
 
@@ -46,6 +47,11 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser(
         "init", help="First-run setup: credentials and model catalog"
+    )
+
+    subparsers.add_parser(
+        "project-init",
+        help="Bootstrap the current directory as a project (creates layout, runs TEVV)",
     )
 
     ap = subparsers.add_parser(
@@ -93,6 +99,8 @@ def cli_main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "init":
         return handle_init()
+    if args.command == "project-init":
+        return handle_project_init()
     if args.command == "add-provider":
         return handle_add_provider(args.name)
     if args.command == "discover-models":
