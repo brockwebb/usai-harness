@@ -6,29 +6,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-04-29
+
+The 0.6.0 release bundles three forcing-function fixes uncovered during the federal-survey-concept-mapper v2 confirmation run: principled parameter validation via a curated family catalog (ADR-014), live-catalog merge reconciliation that halts on dropped referenced models (0.5.0 inline), and the project-config schema as a first-class machine-readable artifact (ADR-015). Also lands multi-rater pool declaration at bootstrap (ADR-013 amendment).
+
 ### Breaking
 - Project configs with unknown top-level fields now fail at load with `ConfigValidationError` rather than warning. The schema (ADR-015) declares `additionalProperties: false`. Migration: remove the unrecognized field, rename it to a recognized one, or run `usai-harness validate-config <path>` for a fuller diagnostic. The most common case is `project:`, `ledger_path:`, or `log_dir:` left over from the pre-0.6.0 bootstrap template; those fields were never read by the loader and are simply removed.
+- A *referenced* model that is dropped by the live-catalog merge without a family-alias reconciliation match now raises `ConfigValidationError` rather than silently falling back. References are catalog-level `default_model`, project-config pool members, and project-config `default_model`. Eliminates the silent default-substitution failure mode that corrupted controlled-variation experiments. Migration: run `usai-harness discover-models` to refresh the catalog and `usai-harness list-models` to see what is currently advertised.
 
 ### Added
 - Project-config JSON Schema artifact at `usai_harness/data/project_config.schema.json` (draft 2020-12). Authoritative description of the project-config field surface; `_KNOWN_PROJECT_FIELDS` is derived from it. (ADR-015)
 - New CLI subcommand `usai-harness schema project-config [--format {json,yaml,markdown}]` prints the schema. The JSON form is the canonical artifact; YAML and Markdown are convenience renderings for tooling and docs. (ADR-015)
 - New CLI subcommand `usai-harness validate-config <path>` validates a YAML against the schema. Pure structural validation (no catalog or credential dependencies). Requires the optional `[validation]` extras: `pip install "usai-harness[validation]"`. (ADR-015)
 - New optional-dependency group `[validation]` for `jsonschema`. The three hard deps (`httpx`, `python-dotenv`, `pyyaml`) are unchanged.
+- Family catalog at `usai_harness/data/families.yaml` ships with the package. Curated, citation-tier-labeled parameter specs keyed on vendor + product line + major version. Aliases preserve major version (e.g., `claude_4_5_sonnet` → `claude-sonnet-4`). (ADR-014)
+- `ConfigLoader` resolves pool members through the family catalog and validates per-model parameter overrides against family rules at config-load time. Unknown aliases pass through with a warning. (ADR-014)
+- New CLI subcommand `usai-harness families` prints the family catalog (table, yaml, markdown formats; optional `--family` filter). (ADR-014)
+- `usai-harness project-init` supports multi-rater pool declaration via `--models MODEL1,MODEL2,...` and `--default MODEL` flags. Without flags, falls back to interactive prompt showing the catalog. Eliminates manual YAML editing for multi-rater projects. (ADR-013 amendment)
 
 ### Changed
 - Bootstrap template (`project-init`) no longer emits the `project:`, `ledger_path:`, or `log_dir:` fields. The project name moves into a comment header; `cost_ledger.jsonl` and `logs/` paths remain harness-managed. The bootstrapped YAML now round-trips clean through `usai-harness validate-config`. (ADR-015)
 - Live-catalog merge reconciles seed-side names against live-side names through the family-catalog alias table. When seed model `S` and live model `L` map to the same `(provider, family_key)`, `S` is treated as renamed to `L`, the seed's accounting fields (cost, context window) are carried forward, and an INFO log line records the rename. Project configs that still reference the seed name transparently pick up the live name with one INFO log per substitution. (ADR-009 / 0.5.0)
-- A *referenced* model that is dropped without a reconciliation match now raises `ConfigValidationError` rather than silently falling back. References are: catalog-level `default_model`, project-config pool members, and project-config `default_model`. The error names the dropped model, the live catalog path, and instructs the user to run `usai-harness discover-models` and `usai-harness list-models`. Eliminates the silent default-substitution failure mode that corrupted controlled-variation experiments.
 - Dropped-models warning text now includes the suggested remediation (`discover-models`, `list-models`).
 - Family catalog: dated Anthropic vendor identifiers (`claude-sonnet-4-5-20241022`, `claude-opus-4-5-20250521`, `claude-3-5-haiku-20241022`) and `meta-llama/Llama-4-Maverick-17B-128E-Instruct` added to the `usai` provider alias table so they reconcile with their USAi-mapped short forms.
-
-### Added
-- `usai-harness project-init` supports multi-rater pool declaration via `--models MODEL1,MODEL2,...` and `--default MODEL` flags. Without flags, falls back to interactive prompt showing the catalog. Eliminates manual YAML editing for multi-rater projects. (ADR-013 amendment)
-- Family catalog at `usai_harness/data/families.yaml` ships with the package. Curated, citation-tier-labeled parameter specs keyed on vendor + product line + major version. Aliases preserve major version (e.g., `claude_4_5_sonnet` → `claude-sonnet-4`). (ADR-014)
-- `ConfigLoader` resolves pool members through the family catalog and validates per-model parameter overrides against family rules at config-load time. Unknown aliases pass through with a warning. (ADR-014)
-- New CLI subcommand `usai-harness families` prints the family catalog (table, yaml, markdown formats; optional `--family` filter).
-
-### Changed
 - Parameter validation is back, but principled. Sourced from the curated family catalog (citable, version-controlled), not from harness-internal guessing. The 0.3.0 strip-validation decision stands for catalog entries; this layer is the replacement. (ADR-012, ADR-014)
 
 ## [0.3.0] - 2026-04-29
@@ -120,7 +120,8 @@ First release. Pip-installable Python client library for rate-limited, model-agn
 - Non-HTTPS endpoints emit a TLS warning on first request.
 - `model_requested` vs `model_returned` surfaces silent model substitution by the endpoint.
 
-[Unreleased]: ../../compare/0.3.0...HEAD
+[Unreleased]: ../../compare/0.6.0...HEAD
+[0.6.0]: ../../compare/0.3.0...0.6.0
 [0.3.0]: ../../compare/0.2.0...0.3.0
 [0.2.0]: ../../compare/0.1.1...0.2.0
 [0.1.1]: ../../compare/0.1.0...0.1.1
