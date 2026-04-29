@@ -75,7 +75,11 @@ def test_project_init_invokes_handler(monkeypatch, recorder):
     rc = cli_mod.cli_main(["project-init"])
     assert rc == 0
     assert calls == [
-        ("project-init", (), {"models_arg": None, "default_arg": None}),
+        (
+            "project-init",
+            (),
+            {"models_arg": None, "default_arg": None, "force": False},
+        ),
     ]
 
 
@@ -95,7 +99,22 @@ def test_project_init_passes_pool_flags(monkeypatch, recorder):
             {
                 "models_arg": "gemini-2.5-flash,claude-sonnet-4-5-20241022",
                 "default_arg": "gemini-2.5-flash",
+                "force": False,
             },
+        ),
+    ]
+
+
+def test_project_init_passes_force_flag(monkeypatch, recorder):
+    calls, make = recorder
+    monkeypatch.setattr(cli_mod, "handle_project_init", make("project-init"))
+    rc = cli_mod.cli_main(["project-init", "--force"])
+    assert rc == 0
+    assert calls == [
+        (
+            "project-init",
+            (),
+            {"models_arg": None, "default_arg": None, "force": True},
         ),
     ]
 

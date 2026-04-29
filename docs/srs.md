@@ -299,6 +299,14 @@ The TEVV smoke test shall send a trivial prompt, validate that the response succ
 Re-running `project-init` shall be safe: existing `usai_harness.yaml`, `scripts/example_batch.py`, and directories shall not be overwritten or duplicated, and the TEVV smoke test shall run on every invocation producing a fresh timestamped report under `tevv/`.
 *Source:* ADR-013.
 
+**FR-058a: project-init pre-flight schema check on existing config.**
+When `usai_harness.yaml` already exists at the target path and `--force` is not supplied, `project-init` shall validate the existing file against the project-config schema before proceeding. A schema-invalid existing file shall cause a non-zero exit with a per-error diagnostic, the schema `$id`, the suggested `usai-harness validate-config` command, and three resolution paths (delete and re-run, hand-edit and re-run, `--force` to overwrite). The TEVV smoke test shall not run when the pre-flight fails. The validator shall use `jsonschema` from the `[validation]` extras when installed and a keys-only fallback derived from the schema's `properties` otherwise. The fallback shall catch unknown top-level fields, which is the failure mode observed on 2026-04-29 with pre-0.6.0 templates.
+*Source:* CC task 2026-04-29_project_init_validates_existing_yaml.
+
+**FR-058b: project-init --force flag.**
+`project-init` shall accept a `--force` flag that bypasses the pre-flight schema check on an existing config and overwrites the file with a freshly-rendered template. `--force` shall not affect any other behavior of `project-init`.
+*Source:* CC task 2026-04-29_project_init_validates_existing_yaml.
+
 ### 4.16 Project Config Schema
 
 **FR-059: Project-config schema artifact.**

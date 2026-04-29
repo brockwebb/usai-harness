@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- `usai-harness project-init` validates an existing `usai_harness.yaml` against the project-config schema before deciding to leave it alone. Schema-invalid existing files cause a non-zero exit with a per-error diagnostic plus three resolution paths, *before* the TEVV smoke test runs. Uses `jsonschema` from the `[validation]` extras when available; falls back to a keys-only check derived from the schema's `properties` otherwise. Fixes the 0.6.0 UX failure mode where a stale pre-0.6.0 YAML caused a confusing TEVV "FAIL" with no clear signal that the existing file was the problem.
+- `usai-harness project-init --force` overwrites an existing `usai_harness.yaml` and bypasses the pre-flight schema check.
+
 ## [0.6.0] - 2026-04-29
 
 The 0.6.0 release bundles three forcing-function fixes uncovered during the federal-survey-concept-mapper v2 confirmation run: principled parameter validation via a curated family catalog (ADR-014), live-catalog merge reconciliation that halts on dropped referenced models (0.5.0 inline), and the project-config schema as a first-class machine-readable artifact (ADR-015). Also lands multi-rater pool declaration at bootstrap (ADR-013 amendment).

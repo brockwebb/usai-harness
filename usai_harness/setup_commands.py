@@ -944,6 +944,53 @@ def _append_gitignore_lines(
     return appended
 
 
+def _preflight_existing_project_config(
+    cfg_path: Path,
+) -> tuple[Optional[list[str]], str]:
+    """Validate an existing project YAML against the project-config schema.
+
+    Returns `(errors, mode)` where `errors` is None when the file is
+    schema-valid (or absent), or a list of error-message strings when
+    invalid. `mode` is `"jsonschema"` when the full validator ran or
+    `"keys-only"` when the lazy import of jsonschema was unavailable and
+    the keys-only fallback ran.
+    """
+    if not cfg_path.exists():
+        return None, "absent"
+    try:
+        raw = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        return [f"YAML parse error: {e}"], "yaml-parse"
+    if not isinstance(raw, dict):
+        return ["top-level YAML value is not a mapping"], "structural"
+
+    from usai_harness.config import (
+        _KNOWN_PROJECT_FIELDS,
+        load_project_config_schema,
+    )
+    schema = load_project_config_schema()
+
+    try:
+        import jsonschema  # type: ignore
+    except ImportError:
+        unknown = sorted(set(raw.keys()) - _KNOWN_PROJECT_FIELDS)
+        if unknown:
+            return [f"unknown top-level fields: {unknown}"], "keys-only"
+        return None, "keys-only"
+
+    validator = jsonschema.Draft202012Validator(schema)
+    errors = sorted(
+        validator.iter_errors(raw), key=lambda e: list(e.absolute_path),
+    )
+    if errors:
+        rendered = []
+        for err in errors:
+            loc = "/".join(str(p) for p in err.absolute_path) or "<root>"
+            rendered.append(f"{loc}: {err.message}")
+        return rendered, "jsonschema"
+    return None, "jsonschema"
+
+
 def _format_models_block(pool_names: list[str]) -> str:
     """Render the `models:` YAML block for the project config template."""
     lines = ["models:"]
@@ -1335,6 +1382,7 @@ def handle_project_init(
     default_arg: Optional[str] = None,
     prompt_fn: Optional[Callable[[str], str]] = None,
     loader=None,
+    force: bool = False,
 ) -> int:
     """Bootstrap the current directory as a USAi Harness project (ADR-013).
 
@@ -1347,13 +1395,65 @@ def handle_project_init(
     declare a multi-rater pool inline; without them, an interactive prompt is
     shown when stdin is a TTY (or when `prompt_fn` is injected for tests),
     otherwise the user-level default model is used (backward compatible).
+
+    Per the 0.6.1 pre-flight rule, if `usai_harness.yaml` already exists at
+    the target path, it is validated against the project-config schema
+    before the bootstrap proceeds. A schema-invalid existing file causes a
+    non-zero exit *before* TEVV runs, so the user sees a schema diagnostic
+    rather than a workload-time failure. `force=True` bypasses the check
+    and overwrites the existing file with a freshly-rendered template.
     """
     import asyncio
 
-    from usai_harness.config import ConfigLoader, ConfigValidationError
+    from usai_harness.config import (
+        ConfigLoader, ConfigValidationError, load_project_config_schema,
+    )
 
     project_root = Path.cwd()
     project_name = project_root.name
+
+    cfg_path = project_root / "usai_harness.yaml"
+    if cfg_path.exists() and not force:
+        errors, mode = _preflight_existing_project_config(cfg_path)
+        if errors is not None:
+            schema = load_project_config_schema()
+            print(
+                f"Existing project config at {cfg_path} fails schema "
+                f"validation ({mode}):",
+                file=sys.stderr,
+            )
+            for err in errors:
+                print(f"  {err}", file=sys.stderr)
+            print(file=sys.stderr)
+            print(
+                f"Schema $id: {schema.get('$id', 'project_config_v1')}",
+                file=sys.stderr,
+            )
+            print(
+                f"For full diagnostics: usai-harness validate-config {cfg_path}",
+                file=sys.stderr,
+            )
+            print("Resolution paths:", file=sys.stderr)
+            print(
+                f"  (a) delete {cfg_path} and re-run project-init",
+                file=sys.stderr,
+            )
+            print(
+                "  (b) hand-edit to remove the invalid fields and re-run",
+                file=sys.stderr,
+            )
+            print(
+                "  (c) re-run with --force to overwrite",
+                file=sys.stderr,
+            )
+            return 1
+
+    if cfg_path.exists() and force:
+        cfg_path.unlink()
+        print(
+            f"--force: overwriting existing {cfg_path}",
+            file=sys.stderr,
+        )
 
     if loader is None:
         try:

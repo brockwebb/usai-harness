@@ -362,13 +362,16 @@ Reports gitignore coverage, tracked-secret scan results, and `pip-audit` output.
 Bootstrap the current directory as a project. Creates `usai_harness.yaml`, `output/`, `tevv/`, `scripts/example_batch.py`, and a TEVV smoke-test report.
 
 ```
-usai-harness project-init [--models MODEL1,MODEL2,...] [--default MODEL]
+usai-harness project-init [--models MODEL1,MODEL2,...] [--default MODEL] [--force]
 ```
 
 - `--models`: Pool members as a comma-separated list of catalog names. Each name must exist in the merged catalog (run `usai-harness list-models` first to see what is available).
 - `--default`: Default model for the pool. Must be one of `--models`. Required to skip the prompt when the pool has more than one member.
+- `--force`: Overwrite an existing `usai_harness.yaml`. Without `--force`, an existing file is validated against the schema; a schema-invalid file causes a non-zero exit *before* TEVV runs (so the user sees a structural diagnostic rather than a workload-time failure). With `--force`, the file is replaced with a freshly-rendered template.
 
 Without flags, `project-init` shows the catalog as a numbered list and prompts for the pool selection (and the default model if the pool has more than one member). When stdin is not a TTY, it falls back to a single-rater pool with the user-level default model. CI and scripted bootstraps should always pass `--models` and `--default` to avoid hanging on a prompt.
+
+Pre-flight schema check on an existing config (added 0.6.1): when `usai_harness.yaml` already exists and `--force` is absent, the file is validated against the project-config schema before bootstrap proceeds. The check uses `jsonschema` from the `[validation]` extras when installed; otherwise it falls back to a keys-only check derived from the schema's `properties`. Schema-invalid files cause a non-zero exit with a per-error diagnostic plus three resolution paths: delete the file and re-run, hand-edit and re-run, or pass `--force` to overwrite.
 
 Cross-provider pools are rejected at bootstrap (ADR-012). Pick from a single provider, or run `project-init` twice with separate pools.
 

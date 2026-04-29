@@ -81,6 +81,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "interactive prompt."
         ),
     )
+    pi.add_argument(
+        "--force",
+        action="store_true",
+        help=(
+            "Overwrite an existing usai_harness.yaml. By default, "
+            "project-init validates the existing file against the schema "
+            "and exits non-zero if it is invalid; --force skips that check "
+            "and writes a fresh template."
+        ),
+    )
 
     ap = subparsers.add_parser(
         "add-provider", help="Register an additional provider"
@@ -194,7 +204,9 @@ def cli_main(argv: list[str] | None = None) -> int:
         return handle_init()
     if args.command == "project-init":
         return handle_project_init(
-            models_arg=args.models, default_arg=args.default_model,
+            models_arg=args.models,
+            default_arg=args.default_model,
+            force=args.force,
         )
     if args.command == "add-provider":
         return handle_add_provider(args.name)

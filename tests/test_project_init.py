@@ -86,12 +86,105 @@ def test_project_init_appends_gitignore(project_root):
     assert "output/logs/" in text
 
 
-def test_project_init_does_not_overwrite_config(project_root):
+def test_project_init_does_not_overwrite_valid_existing_config(project_root):
+    """A schema-valid existing usai_harness.yaml is left in place and the
+    bootstrap proceeds to TEVV. Regression test for the pre-0.6.1 'leaving
+    alone' branch, now narrowed by the pre-flight schema check."""
     cfg = project_root / "usai_harness.yaml"
-    sentinel = "# user-edited config; do not overwrite\nproject: keep-me\n"
+    sentinel = (
+        "# user-edited config; do not overwrite\n"
+        "provider: usai\n"
+        "models:\n"
+        "  - name: claude-sonnet-4-5-20241022\n"
+        "default_model: claude-sonnet-4-5-20241022\n"
+    )
     cfg.write_text(sentinel, encoding="utf-8")
-    setup_commands.handle_project_init(transport=_MockTransport())
+    rc = setup_commands.handle_project_init(transport=_MockTransport())
+    assert rc == 0
     assert cfg.read_text() == sentinel
+
+
+def test_project_init_invalid_existing_blocks_before_tevv(project_root, capsys):
+    """Per the 0.6.1 pre-flight rule: a schema-invalid existing YAML causes
+    a non-zero exit with a schema diagnostic *before* TEVV runs."""
+    cfg = project_root / "usai_harness.yaml"
+    cfg.write_text(
+        "project: legacy_field\n"
+        "provider: usai\n"
+        "models:\n"
+        "  - name: claude-sonnet-4-5-20241022\n"
+        "default_model: claude-sonnet-4-5-20241022\n"
+        "ledger_path: foo.jsonl\n"
+        "log_dir: bar\n",
+        encoding="utf-8",
+    )
+    rc = setup_commands.handle_project_init(transport=_MockTransport())
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "fails schema validation" in err
+    assert "ledger_path" in err or "log_dir" in err or "project" in err
+    assert "validate-config" in err
+    assert "--force" in err
+    # TEVV must not have run.
+    assert not (project_root / "tevv").exists() or not list(
+        (project_root / "tevv").glob("init_report_*.md")
+    )
+
+
+def test_project_init_force_overwrites_invalid_existing(project_root, capsys):
+    """--force bypasses the pre-flight check and overwrites the existing
+    YAML with a freshly-rendered template; TEVV then runs."""
+    cfg = project_root / "usai_harness.yaml"
+    cfg.write_text(
+        "project: legacy_field\n"
+        "ledger_path: foo.jsonl\n"
+        "models:\n"
+        "  - name: claude-sonnet-4-5-20241022\n"
+        "default_model: claude-sonnet-4-5-20241022\n",
+        encoding="utf-8",
+    )
+    rc = setup_commands.handle_project_init(
+        transport=_MockTransport(),
+        models_arg="claude-sonnet-4-5-20241022",
+        force=True,
+    )
+    assert rc == 0
+    text = cfg.read_text()
+    assert "ledger_path:" not in text
+    assert "project: legacy_field" not in text
+    # The freshly-rendered template round-trips through validate-config.
+    validate_rc = setup_commands.handle_validate_config(str(cfg))
+    assert validate_rc == 0
+
+
+def test_project_init_keys_only_fallback_when_jsonschema_missing(
+    project_root, capsys, monkeypatch,
+):
+    """When jsonschema is not installed, the pre-flight falls back to a
+    keys-only check sourced from the schema's `properties`. The
+    unknown-field case observed 2026-04-29 (`ledger_path`, `log_dir`,
+    `project`) is still caught."""
+    cfg = project_root / "usai_harness.yaml"
+    cfg.write_text(
+        "project: legacy_field\n"
+        "provider: usai\n"
+        "models:\n"
+        "  - name: claude-sonnet-4-5-20241022\n"
+        "default_model: claude-sonnet-4-5-20241022\n",
+        encoding="utf-8",
+    )
+    real_modules = dict(__import__("sys").modules)
+    monkeypatch.setitem(__import__("sys").modules, "jsonschema", None)
+    try:
+        rc = setup_commands.handle_project_init(transport=_MockTransport())
+    finally:
+        sys_mod = __import__("sys")
+        sys_mod.modules.clear()
+        sys_mod.modules.update(real_modules)
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "keys-only" in err
+    assert "project" in err
 
 
 def test_project_init_idempotent(project_root):
