@@ -250,6 +250,14 @@ usai-harness discover-models usai
 
 The command does not touch credentials and does not modify the repository-level `configs/models.yaml`. It only updates your user-level catalog.
 
+To see what is currently in the merged catalog (without hitting the network), use:
+
+```bash
+usai-harness list-models
+```
+
+Add `--provider NAME` to filter, or `--format names` to get one model name per line for piping. Use this when you are setting up a multi-rater pool in `usai_harness.yaml` and need the exact name strings.
+
 ### 5.3 Customizing model presentation
 
 If you want friendly display names or different default temperatures for specific models, edit `configs/models.yaml` in the repository or in your user-level config. These are presentation overrides. The endpoint is still the source of truth for which models exist.

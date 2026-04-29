@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- New CLI subcommand `usai-harness list-models` prints the merged catalog (repo + user-level). Supports `--provider` filtering and `--format {table,yaml,names}` output. Useful for finding exact model names to declare in `usai_harness.yaml` pool configs.
+
 ### Removed
 - Per-model parameter validation (`temperature_range`, `max_output_tokens`) from `ProjectConfig` and the model catalog. The harness no longer enforces parameter ranges; provider response is the source of truth. (ADR-012 amendment, 2026-04-29)
 

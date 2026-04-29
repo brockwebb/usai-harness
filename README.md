@@ -173,6 +173,7 @@ variables. The library reads those too, no file required.
 | `usai-harness init` | First-run setup. Prompts for endpoint and key, tests everything. |
 | `usai-harness add-provider NAME` | Add another provider (for example OpenRouter, Anthropic). |
 | `usai-harness discover-models` | Refresh the model list from each configured endpoint. |
+| `usai-harness list-models` | Print the merged catalog. Use this to find the exact model names for a pool config. |
 | `usai-harness verify` | End-to-end health check for every provider you have configured. |
 | `usai-harness ping` | Quick single-call check against the default provider. |
 | `usai-harness cost-report` | Summary of tokens and costs by project, job, or model. |

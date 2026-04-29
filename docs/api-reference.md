@@ -294,7 +294,20 @@ usai-harness discover-models [PROVIDER]
 
 Does not touch credentials. Does not modify repository-level `configs/models.yaml`. Updates user-level model catalog.
 
-### 3.4 `usai-harness verify`
+### 3.4 `usai-harness list-models`
+
+Print the merged catalog (repository seed plus user-level catalog) so you can see exactly which model names you can declare in a `usai_harness.yaml` pool.
+
+```
+usai-harness list-models [--provider NAME] [--format {table,yaml,names}]
+```
+
+- `--provider NAME`: Filter to one provider.
+- `--format`: Output format. `table` is the default and is intended for human reading. `yaml` dumps a `providers: {NAME: {models: [...]}}` structure suitable for piping or copying. `names` emits one model name per line for use with `grep`, `xargs`, and similar.
+
+Read-only. Returns 0 if at least one entry remains after filtering, 1 if the catalog is empty (run `init` or `discover-models`) or the provider filter matches nothing.
+
+### 3.5 `usai-harness verify`
 
 End-to-end health check.
 
@@ -306,7 +319,7 @@ usai-harness verify [--provider NAME]
 
 Reports per-provider: credential resolves, endpoint reachable, model catalog retrieved, test call succeeded. Exit code 0 only when everything passes.
 
-### 3.5 `usai-harness ping`
+### 3.6 `usai-harness ping`
 
 Minimal single-call check. Faster than `verify`. Useful for scripted pre-flight checks.
 
@@ -316,7 +329,7 @@ usai-harness ping [--provider NAME]
 
 - `--provider NAME`: Check only the specified provider. Defaults to the default provider.
 
-### 3.6 `usai-harness cost-report`
+### 3.7 `usai-harness cost-report`
 
 Aggregate cost ledger entries.
 
@@ -332,7 +345,7 @@ usai-harness cost-report [--project NAME] [--job NAME] [--since DATE] [--until D
 
 Outputs a summary table to stdout.
 
-### 3.7 `usai-harness audit`
+### 3.8 `usai-harness audit`
 
 Security hygiene check.
 

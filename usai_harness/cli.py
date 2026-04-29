@@ -6,6 +6,7 @@ Subcommands:
     init             — first-run setup: credentials and model catalog
     add-provider     — register an additional provider
     discover-models  — refresh the live model catalog
+    list-models      — print the merged model catalog (repo + user-level)
     verify           — end-to-end health check of all providers
     ping             — minimal single-call check of the default provider
     audit            — security hygiene checks (gitignore, tracked secrets, pip-audit)
@@ -20,6 +21,7 @@ from usai_harness.setup_commands import (
     handle_add_provider,
     handle_discover_models,
     handle_init,
+    handle_list_models,
     handle_ping,
     handle_project_init,
     handle_verify,
@@ -67,6 +69,26 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Provider to refresh (default: all configured providers)",
     )
 
+    lm = subparsers.add_parser(
+        "list-models",
+        help="Print the merged model catalog (repo + user-level) for use in pool configs",
+    )
+    lm.add_argument(
+        "--provider",
+        help="Filter to one provider (e.g., 'usai', 'openrouter')",
+        default=None,
+    )
+    lm.add_argument(
+        "--format",
+        choices=["table", "yaml", "names"],
+        default="table",
+        help=(
+            "Output format. 'table' for human reading, 'yaml' for catalog "
+            "inspection, 'names' for one-per-line model names suitable for "
+            "piping"
+        ),
+    )
+
     subparsers.add_parser(
         "verify", help="End-to-end health check of all providers"
     )
@@ -105,6 +127,8 @@ def cli_main(argv: list[str] | None = None) -> int:
         return handle_add_provider(args.name)
     if args.command == "discover-models":
         return handle_discover_models(args.provider)
+    if args.command == "list-models":
+        return handle_list_models(provider=args.provider, output_format=args.format)
     if args.command == "verify":
         return handle_verify()
     if args.command == "ping":

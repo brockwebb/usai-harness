@@ -545,6 +545,75 @@ def handle_verify(
     return 0 if not any_failed else 1
 
 
+def handle_list_models(
+    provider: Optional[str] = None,
+    output_format: str = "table",
+    models_config_path: Optional[Path] = None,
+) -> int:
+    """Print the merged model catalog (repo + user-level).
+
+    Read-only. The merged view is what `ProjectConfig` would see at load time.
+    Returns 0 if at least one entry remains after filtering, 1 if the catalog
+    is empty or the provider filter matches nothing.
+    """
+    from usai_harness.config import ConfigLoader, ConfigValidationError
+
+    try:
+        loader = ConfigLoader(models_config_path=models_config_path)
+    except ConfigValidationError as e:
+        print(f"Cannot load catalog: {e}", file=sys.stderr)
+        return 1
+
+    all_names = loader.list_models()
+    if not all_names:
+        print(
+            "Catalog is empty. Run 'usai-harness init' (first-run) or "
+            "'usai-harness discover-models' to populate it.",
+            file=sys.stderr,
+        )
+        return 1
+
+    entries: list[tuple[str, str]] = []
+    for name in sorted(all_names):
+        m = loader.get_model(name)
+        entries.append((name, m.provider))
+
+    if provider is not None:
+        filtered = [e for e in entries if e[1] == provider]
+        if not filtered:
+            available = sorted({e[1] for e in entries})
+            print(
+                f"No models found for provider '{provider}'. "
+                f"Available providers: {available}.",
+                file=sys.stderr,
+            )
+            return 1
+        entries = filtered
+
+    if output_format == "names":
+        for name, _ in entries:
+            print(name)
+    elif output_format == "yaml":
+        grouped: dict[str, list[str]] = {}
+        for name, prov in entries:
+            grouped.setdefault(prov, []).append(name)
+        out = {
+            "providers": {
+                prov: {"models": models} for prov, models in grouped.items()
+            }
+        }
+        print(yaml.safe_dump(out, sort_keys=False), end="")
+    else:  # table
+        name_w = max(len("name"), max(len(e[0]) for e in entries))
+        prov_w = max(len("provider"), max(len(e[1]) for e in entries))
+        print(f"{'name':<{name_w}}  {'provider':<{prov_w}}")
+        print(f"{'-' * name_w}  {'-' * prov_w}")
+        for name, prov in entries:
+            print(f"{name:<{name_w}}  {prov:<{prov_w}}")
+
+    return 0
+
+
 def handle_ping(model: Optional[str] = None) -> int:
     """Minimal single-call check against the default provider.
 
