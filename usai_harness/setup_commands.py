@@ -703,10 +703,19 @@ def _append_gitignore_lines(
     return appended
 
 
+def _format_models_block(pool_names: list[str]) -> str:
+    """Render the `models:` YAML block for the project config template."""
+    lines = ["models:"]
+    for name in pool_names:
+        lines.append(f"  - name: {name}")
+    return "\n".join(lines)
+
+
 def _create_project_layout(
     root: Path,
     project_name: str,
     provider_name: str,
+    pool_names: list[str],
     default_model_name: str,
 ) -> list[tuple[str, str]]:
     """Render templates and write files; existing files are left in place.
@@ -731,6 +740,7 @@ def _create_project_layout(
             "usai_harness.yaml.template",
             project_name=project_name,
             provider_name=provider_name,
+            models_block=_format_models_block(pool_names),
             default_model_name=default_model_name,
         )
         cfg_path.write_text(cfg_text, encoding="utf-8")
@@ -932,13 +942,170 @@ def _write_tevv_report(
     return report_path
 
 
-def handle_project_init(transport=None) -> int:
+def _resolve_pool_from_args(
+    loader,
+    models_arg: Optional[str],
+    default_arg: Optional[str],
+    prompt_fn: Optional[Callable[[str], str]],
+) -> tuple[list, "object"]:
+    """Resolve (pool_models, default_model) per ADR-013 amendment, 2026-04-29.
+
+    Three modes, by precedence:
+        1. `models_arg` provided → parse and validate; ask for default only if
+           the pool has more than one member and `default_arg` is missing.
+        2. `prompt_fn` provided (or stdin is a TTY when `prompt_fn is None`)
+           → present the catalog interactively and let the user pick.
+        3. Neither → fall back to the user-level default model (single-rater).
+    """
+    from usai_harness.config import ConfigValidationError
+
+    catalog_names = loader.list_models()
+
+    if models_arg:
+        pool_names = [n.strip() for n in models_arg.split(",") if n.strip()]
+        if not pool_names:
+            raise ConfigValidationError(
+                "--models was empty after parsing; expected a comma-separated "
+                "list of catalog model names."
+            )
+    elif prompt_fn is not None or sys.stdin.isatty():
+        if prompt_fn is None:
+            prompt_fn = input
+        if not catalog_names:
+            raise ConfigValidationError(
+                "Catalog is empty; cannot present a model picker. Run "
+                "'usai-harness init' or 'usai-harness discover-models' first."
+            )
+        pool_names = _prompt_for_pool(loader, catalog_names, prompt_fn)
+    else:
+        default_model = loader.get_default_model()
+        return [default_model], default_model
+
+    pool_models = []
+    for name in pool_names:
+        try:
+            pool_models.append(loader.get_model(name))
+        except ConfigValidationError as e:
+            raise ConfigValidationError(
+                f"--models references unknown catalog entry '{name}'. "
+                f"Available models: {sorted(catalog_names)}. "
+                f"Run 'usai-harness discover-models' if the catalog is stale. "
+                f"({e})"
+            ) from e
+
+    providers_in_pool = {m.provider for m in pool_models}
+    if len(providers_in_pool) > 1:
+        raise ConfigValidationError(
+            f"Pool members span multiple providers "
+            f"{sorted(providers_in_pool)}; cross-provider pools are rejected "
+            f"(ADR-012). Pick models from a single provider, or run "
+            f"project-init twice with separate pools."
+        )
+
+    if default_arg is not None:
+        match = next((m for m in pool_models if m.name == default_arg), None)
+        if match is None:
+            raise ConfigValidationError(
+                f"--default {default_arg!r} is not in the declared pool "
+                f"{[m.name for m in pool_models]}."
+            )
+        default_model = match
+    elif len(pool_models) == 1:
+        default_model = pool_models[0]
+    else:
+        if prompt_fn is None and not sys.stdin.isatty():
+            raise ConfigValidationError(
+                f"Pool has {len(pool_models)} members but --default was not "
+                f"provided and stdin is not interactive. Pass --default "
+                f"<one of {[m.name for m in pool_models]}>."
+            )
+        default_model = _prompt_for_default(pool_models, prompt_fn or input)
+
+    return pool_models, default_model
+
+
+def _prompt_for_pool(
+    loader,
+    catalog_names: list,
+    prompt_fn: Callable[[str], str],
+) -> list[str]:
+    """Show the catalog and read a comma-separated selection of indices."""
+    sorted_names = sorted(catalog_names)
+    print("Available models:")
+    for i, name in enumerate(sorted_names, start=1):
+        prov = loader.get_model(name).provider
+        print(f"  {i}. {name}  ({prov})")
+    raw = prompt_fn(
+        "Select models for your pool (comma-separated numbers, e.g. 2,3): "
+    )
+    indices: list[int] = []
+    for token in raw.split(","):
+        token = token.strip()
+        if not token:
+            continue
+        try:
+            idx = int(token)
+        except ValueError:
+            from usai_harness.config import ConfigValidationError
+            raise ConfigValidationError(
+                f"Pool selection '{token}' is not a number."
+            )
+        if not (1 <= idx <= len(sorted_names)):
+            from usai_harness.config import ConfigValidationError
+            raise ConfigValidationError(
+                f"Pool selection {idx} is out of range "
+                f"(1..{len(sorted_names)})."
+            )
+        indices.append(idx)
+    if not indices:
+        from usai_harness.config import ConfigValidationError
+        raise ConfigValidationError(
+            "No models selected. Re-run project-init and pick at least one."
+        )
+    return [sorted_names[i - 1] for i in indices]
+
+
+def _prompt_for_default(pool_models: list, prompt_fn: Callable[[str], str]):
+    print("Pool members:")
+    for i, m in enumerate(pool_models, start=1):
+        print(f"  {i}. {m.name}")
+    raw = prompt_fn(
+        "Which model should be the default? (number): "
+    ).strip()
+    try:
+        idx = int(raw)
+    except ValueError:
+        from usai_harness.config import ConfigValidationError
+        raise ConfigValidationError(
+            f"Default-model selection '{raw}' is not a number."
+        )
+    if not (1 <= idx <= len(pool_models)):
+        from usai_harness.config import ConfigValidationError
+        raise ConfigValidationError(
+            f"Default-model selection {idx} out of range "
+            f"(1..{len(pool_models)})."
+        )
+    return pool_models[idx - 1]
+
+
+def handle_project_init(
+    transport=None,
+    models_arg: Optional[str] = None,
+    default_arg: Optional[str] = None,
+    prompt_fn: Optional[Callable[[str], str]] = None,
+    loader=None,
+) -> int:
     """Bootstrap the current directory as a USAi Harness project (ADR-013).
 
     Creates the standard layout (`usai_harness.yaml`, `output/`, `tevv/`,
     `scripts/example_batch.py`) and runs a single TEVV smoke round-trip
     against the project's default model. Writes a markdown report to
     `tevv/init_report_<utc_timestamp>.md`. Returns 0 on TEVV pass, 1 on fail.
+
+    Per the ADR-013 amendment (2026-04-29), `models_arg` and `default_arg`
+    declare a multi-rater pool inline; without them, an interactive prompt is
+    shown when stdin is a TTY (or when `prompt_fn` is injected for tests),
+    otherwise the user-level default model is used (backward compatible).
     """
     import asyncio
 
@@ -947,31 +1114,41 @@ def handle_project_init(transport=None) -> int:
     project_root = Path.cwd()
     project_name = project_root.name
 
-    loader = ConfigLoader()
+    if loader is None:
+        try:
+            loader = ConfigLoader()
+        except ConfigValidationError as e:
+            print(f"Cannot bootstrap: catalog failed to load. ({e})", file=sys.stderr)
+            return 1
+
     try:
-        default_model = loader.get_default_model()
+        pool_models, default_model = _resolve_pool_from_args(
+            loader, models_arg, default_arg, prompt_fn,
+        )
     except ConfigValidationError as e:
         print(
-            f"Cannot bootstrap: no default model resolved from the harness "
-            f"catalog. Run 'usai-harness init' first to register a provider. "
-            f"({e})",
+            f"Cannot bootstrap: {e} "
+            f"Run 'usai-harness init' or 'usai-harness discover-models' if "
+            f"the catalog is empty.",
             file=sys.stderr,
         )
         return 1
 
+    pool_names = [m.name for m in pool_models]
+
     print("USAi Harness project-init")
     print(f"  Project root: {project_root}")
     print(f"  Project name: {project_name}")
-    print(
-        f"  Default model: {default_model.name} "
-        f"(provider {default_model.provider})"
-    )
+    print(f"  Provider: {default_model.provider}")
+    print(f"  Pool: {pool_names}")
+    print(f"  Default model: {default_model.name}")
     print()
 
     actions = _create_project_layout(
         root=project_root,
         project_name=project_name,
         provider_name=default_model.provider,
+        pool_names=pool_names,
         default_model_name=default_model.name,
     )
     for action, path in actions:
@@ -990,7 +1167,7 @@ def handle_project_init(transport=None) -> int:
         project_root=project_root,
         project_name=project_name,
         default_model=default_model,
-        pool_names=[default_model.name],
+        pool_names=pool_names,
         smoke_result=smoke_result,
     )
     print(f"  TEVV report: {report_path}")

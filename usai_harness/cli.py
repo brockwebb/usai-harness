@@ -51,9 +51,29 @@ def _build_parser() -> argparse.ArgumentParser:
         "init", help="First-run setup: credentials and model catalog"
     )
 
-    subparsers.add_parser(
+    pi = subparsers.add_parser(
         "project-init",
         help="Bootstrap the current directory as a project (creates layout, runs TEVV)",
+    )
+    pi.add_argument(
+        "--models",
+        default=None,
+        help=(
+            "Comma-separated list of catalog model names for the pool "
+            "(e.g. 'gemini-2.5-flash,claude_4_5_sonnet'). When omitted, "
+            "project-init prompts interactively or falls back to the "
+            "user-level default model."
+        ),
+    )
+    pi.add_argument(
+        "--default",
+        dest="default_model",
+        default=None,
+        help=(
+            "Default model for the pool. Must be one of --models. Required "
+            "when --models has more than one entry and you want to skip the "
+            "interactive prompt."
+        ),
     )
 
     ap = subparsers.add_parser(
@@ -122,7 +142,9 @@ def cli_main(argv: list[str] | None = None) -> int:
     if args.command == "init":
         return handle_init()
     if args.command == "project-init":
-        return handle_project_init()
+        return handle_project_init(
+            models_arg=args.models, default_arg=args.default_model,
+        )
     if args.command == "add-provider":
         return handle_add_provider(args.name)
     if args.command == "discover-models":

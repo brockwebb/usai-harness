@@ -357,6 +357,23 @@ usai-harness audit [--fix-gitignore]
 
 Reports gitignore coverage, tracked-secret scan results, and `pip-audit` output. Exit code 0 only when all three pass.
 
+### 3.9 `usai-harness project-init`
+
+Bootstrap the current directory as a project. Creates `usai_harness.yaml`, `output/`, `tevv/`, `scripts/example_batch.py`, and a TEVV smoke-test report.
+
+```
+usai-harness project-init [--models MODEL1,MODEL2,...] [--default MODEL]
+```
+
+- `--models`: Pool members as a comma-separated list of catalog names. Each name must exist in the merged catalog (run `usai-harness list-models` first to see what is available).
+- `--default`: Default model for the pool. Must be one of `--models`. Required to skip the prompt when the pool has more than one member.
+
+Without flags, `project-init` shows the catalog as a numbered list and prompts for the pool selection (and the default model if the pool has more than one member). When stdin is not a TTY, it falls back to a single-rater pool with the user-level default model. CI and scripted bootstraps should always pass `--models` and `--default` to avoid hanging on a prompt.
+
+Cross-provider pools are rejected at bootstrap (ADR-012). Pick from a single provider, or run `project-init` twice with separate pools.
+
+Per-model parameter overrides (such as `temperature: 0.1` on a specific Gemini entry) are not flag-driven; edit the generated `usai_harness.yaml` for those.
+
 ## 4. Extension Protocols
 
 For advanced users adding a new transport or credential backend.

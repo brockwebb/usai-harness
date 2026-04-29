@@ -55,6 +55,17 @@ config and example script in place, deduplicates `.gitignore` entries, and
 produces a fresh report so you have evidence of every harness version your
 project has run against.
 
+For a multi-rater project, declare the pool inline:
+
+```bash
+usai-harness project-init \
+    --models gemini-2.5-flash,claude-sonnet-4-5-20241022 \
+    --default gemini-2.5-flash
+```
+
+Without flags, `project-init` shows the catalog and prompts for the pool
+interactively (run `usai-harness list-models` first if you want to plan).
+
 After `project-init`, any Python script in the project can do this:
 
 ```python

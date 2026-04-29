@@ -7,11 +7,8 @@ provider: {provider_name}
 # Pool of models available to this project.
 # Add or remove entries as needed. Each name must exist in the harness catalog
 # (run `usai-harness discover-models` to refresh the catalog from the live endpoint).
-models:
-  - name: {default_model_name}
-    # Optional per-model overrides; uncomment and set as needed.
-    # temperature: 0
-    # max_tokens: 4096
+# Per-model overrides such as `temperature: 0.1` can be added as nested keys.
+{models_block}
 
 default_model: {default_model_name}
 

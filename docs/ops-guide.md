@@ -67,7 +67,25 @@ Run `usai-harness project-init` once per project, from the project's root direct
 
 The exit code is 0 on TEVV pass and 1 on TEVV fail. A failed TEVV does not roll back created files; the layout is still useful for diagnosis and the report records the failure mode.
 
-### 1.5 Project configuration schema
+### 1.5 Multi-rater bootstrap
+
+For a project that needs more than one rater, declare the pool inline at bootstrap. No post-bootstrap YAML editing required:
+
+```bash
+usai-harness project-init \
+    --models gemini-2.5-flash,claude-sonnet-4-5-20241022 \
+    --default gemini-2.5-flash
+```
+
+`--models` is a comma-separated list of catalog model names. Each must exist in the merged catalog; run `usai-harness list-models` first to see the available names. `--default` names the pool member used when a task does not specify a model.
+
+If you run `project-init` without flags from an interactive shell, it shows the catalog as a numbered list and prompts for the pool selection (and the default). CI and scripted bootstraps must pass the flags to avoid hanging.
+
+Cross-provider pools are rejected at bootstrap (ADR-012). Pick from a single provider, or run `project-init` twice with separate pools.
+
+Per-model parameter overrides (e.g. `temperature: 0.1` on a specific Gemini entry) are not flag-driven. Bootstrap with `--models`, then add the override as a one-line edit to the generated `usai_harness.yaml`. Project-specific configuration belongs in version control; the bootstrap command should not be regenerating it.
+
+### 1.6 Project configuration schema
 
 The `usai_harness.yaml` written by `project-init` is the file your project edits to declare its model pool and per-project settings. The schema:
 

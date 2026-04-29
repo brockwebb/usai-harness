@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- `usai-harness project-init` supports multi-rater pool declaration via `--models MODEL1,MODEL2,...` and `--default MODEL` flags. Without flags, falls back to interactive prompt showing the catalog. Eliminates manual YAML editing for multi-rater projects. (ADR-013 amendment)
+
 ## [0.3.0] - 2026-04-29
 
 ### Added

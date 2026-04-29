@@ -74,7 +74,30 @@ def test_project_init_invokes_handler(monkeypatch, recorder):
     monkeypatch.setattr(cli_mod, "handle_project_init", make("project-init"))
     rc = cli_mod.cli_main(["project-init"])
     assert rc == 0
-    assert calls == [("project-init", (), {})]
+    assert calls == [
+        ("project-init", (), {"models_arg": None, "default_arg": None}),
+    ]
+
+
+def test_project_init_passes_pool_flags(monkeypatch, recorder):
+    calls, make = recorder
+    monkeypatch.setattr(cli_mod, "handle_project_init", make("project-init"))
+    rc = cli_mod.cli_main([
+        "project-init",
+        "--models", "gemini-2.5-flash,claude-sonnet-4-5-20241022",
+        "--default", "gemini-2.5-flash",
+    ])
+    assert rc == 0
+    assert calls == [
+        (
+            "project-init",
+            (),
+            {
+                "models_arg": "gemini-2.5-flash,claude-sonnet-4-5-20241022",
+                "default_arg": "gemini-2.5-flash",
+            },
+        ),
+    ]
 
 
 def test_add_provider_passes_name(monkeypatch, recorder):

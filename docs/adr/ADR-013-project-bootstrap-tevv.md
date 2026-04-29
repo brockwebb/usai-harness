@@ -109,3 +109,20 @@ The harness's adoption tax drops to near zero. Documentation no longer needs to 
 The federal-survey-concept-mapper, when it adopts the new schema, runs `project-init` from the concept mapper root, gets the standard layout, and gets a TEVV report. The bespoke smoke test script written during the prior session is deleted; its purpose is now covered by the harness itself.
 
 The harness gains a templates directory at `usai_harness/templates/` containing the starter `usai_harness.yaml`, the starter `example_batch.py`, and the gitignore entries. The template content is part of the package, not user-config-relative. Updating templates is a harness release concern.
+
+## Amendment, 2026-04-29 — multi-rater pool at bootstrap
+
+The original decision wrote a single-rater pool with the user-level default model. Any project that needed a multi-rater pool had to hand-edit `usai_harness.yaml` after `project-init` finished, which reintroduces exactly the level-3 friction the bootstrap command exists to remove. The federal-survey-concept-mapper v2 confirmation run hit this on first contact: bootstrap, smoke test fails ("pool only has one rater"), look up the canonical pool YAML in the project README, paste, save, re-run.
+
+`project-init` now accepts pool declaration inline. Two new flags:
+
+- `--models MODEL1,MODEL2,...` — pool members as a comma-separated list of catalog names. Each name must exist in the merged catalog; an unknown name fails loud with the catalog list.
+- `--default MODEL` — must be one of `--models`. Required to skip the prompt when the pool has more than one member.
+
+When no flags are given and stdin is interactive, `project-init` prompts: it shows the catalog as a numbered list, takes a comma-separated index selection for the pool, and (for multi-member pools) takes a single index for the default. CI and other non-interactive contexts pass `--models` and `--default` to avoid hanging.
+
+When neither flags nor an interactive stdin are present, `project-init` keeps its original single-rater behavior with the user-level default model. Existing tests pass without modification.
+
+Cross-provider pools are still rejected at bootstrap (ADR-012). `project-init --models claude_4_5_sonnet,alpha-model` exits 1 with a clear cross-provider error before writing any files.
+
+Per-model parameter overrides (such as `temperature: 0.1` on a specific Gemini entry) are *not* a CLI flag. The pattern is `project-init --models gemini-2.5-flash,claude_4_5_sonnet`, then a one-line edit to the generated YAML for the override. That edit is project-specific configuration that genuinely belongs in version control, not boilerplate the bootstrap command should be regenerating.
