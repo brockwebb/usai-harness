@@ -1,0 +1,85 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.anthropic.invalid/usai-harness/project-config-v1.json",
+  "title": "USAi Harness Project Config",
+  "description": "Schema for `usai_harness.yaml` files. Per ADR-011 / ADR-012 / ADR-015. Authoritative artifact: `usai_harness/data/project_config.schema.json`. Catalog membership and family-catalog parameter ranges are validated separately at config-load time and are deliberately out of scope here.",
+  "type": "object",
+  "additionalProperties": false,
+  "oneOf": [
+    {"required": ["model"]},
+    {"required": ["models"]}
+  ],
+  "properties": {
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Legacy single-model form. The loader translates this to a one-element pool with the same name as default_model. Mutually exclusive with `models`."
+    },
+    "models": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Pool of models available to this project. Each member is either a bare string (the catalog name) or an object whose `name` is the catalog name and whose other keys are forwarded to the transport unchanged.",
+      "items": {
+        "oneOf": [
+          {"type": "string", "minLength": 1},
+          {
+            "type": "object",
+            "required": ["name"],
+            "additionalProperties": true,
+            "properties": {
+              "name": {"type": "string", "minLength": 1}
+            }
+          }
+        ]
+      }
+    },
+    "default_model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Default model name used when a task does not select one. Must be a pool member. Required when `models` has more than one entry; inferred when there is exactly one."
+    },
+    "provider": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Endpoint provider for the pool (e.g. `usai`, `openrouter`). Auto-detected from pool members when omitted; cross-provider pools are rejected at load time."
+    },
+    "temperature": {
+      "type": "number",
+      "description": "Project-default temperature. The harness forwards this to the transport unchanged; the family catalog and the provider response are the sources of truth for whether this value is accepted."
+    },
+    "max_tokens": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Project-default max output tokens."
+    },
+    "system_prompt": {
+      "type": "string",
+      "description": "Project-default system prompt; per-task overrides win when present."
+    },
+    "workers": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "default": 3,
+      "description": "Number of async workers pulling from the request queue."
+    },
+    "batch_size": {
+      "type": "integer",
+      "minimum": 1,
+      "default": 50,
+      "description": "Worker pool batch size."
+    },
+    "credentials": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Credential backend selector. Backend-specific kwargs flow through as additional properties.",
+      "properties": {
+        "backend": {
+          "type": "string",
+          "enum": ["dotenv", "env_var", "azure_keyvault"],
+          "default": "dotenv"
+        }
+      }
+    }
+  }
+}

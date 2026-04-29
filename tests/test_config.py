@@ -132,19 +132,20 @@ def test_validate_request_within_limits():
     loader.validate_request(m, prompt_tokens=1000, max_tokens=2000)
 
 
-def test_unknown_fields_warns(tmp_path, caplog):
+def test_unknown_fields_raise(tmp_path):
+    """Per ADR-015 (0.6.0): unknown top-level fields fail at config-load
+    rather than warning. The schema declares additionalProperties: false."""
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
     cfg = _write_project_config(tmp_path, """
         model: "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
         foo: bar
     """)
-    caplog.set_level(logging.WARNING, logger="usai_harness.config")
-    pc = loader.load_project_config(cfg)
-
-    assert pc.default_model.name == "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
-    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
-    assert warnings, "expected a WARNING for unknown field"
-    assert any("foo" in r.getMessage() for r in warnings)
+    with pytest.raises(ConfigValidationError) as exc:
+        loader.load_project_config(cfg)
+    msg = str(exc.value)
+    assert "foo" in msg
+    assert "unknown fields" in msg.lower()
+    assert "validate-config" in msg
 
 
 def test_models_yaml_missing_raises(tmp_path):

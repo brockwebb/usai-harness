@@ -6,6 +6,7 @@ endpoints or stdin/stdout.
 """
 
 import getpass
+import json
 import os
 import sys
 from datetime import datetime, timezone
@@ -612,6 +613,106 @@ def handle_list_models(
             print(f"{name:<{name_w}}  {prov:<{prov_w}}")
 
     return 0
+
+
+def handle_schema_project_config(output_format: str = "json") -> int:
+    """Print the project-config JSON Schema (ADR-015).
+
+    The artifact at `usai_harness/data/project_config.schema.json` is the
+    authoritative description of the project-config field surface. Three
+    output formats: `json` (verbatim, the canonical form), `yaml`, and
+    `markdown` (a human-readable table for embedding in docs).
+    """
+    from usai_harness.config import load_project_config_schema
+
+    schema = load_project_config_schema()
+
+    if output_format == "yaml":
+        print(yaml.safe_dump(schema, sort_keys=False), end="")
+        return 0
+
+    if output_format == "markdown":
+        title = schema.get("title", "Project Config")
+        schema_id = schema.get("$id", "")
+        print(f"# {title}")
+        if schema_id:
+            print(f"`$id`: `{schema_id}`")
+        print()
+        if "description" in schema:
+            print(schema["description"])
+            print()
+        required_top = set()
+        for clause in schema.get("oneOf", []) or []:
+            if isinstance(clause, dict):
+                required_top.update(clause.get("required", []) or [])
+        print("| Field | Type | Required | Default | Description |")
+        print("|-------|------|----------|---------|-------------|")
+        for name, prop in (schema.get("properties") or {}).items():
+            if not isinstance(prop, dict):
+                continue
+            t = prop.get("type", "")
+            if isinstance(t, list):
+                t = " | ".join(t)
+            required = "yes" if name in required_top else ""
+            default = prop.get("default", "")
+            desc = (prop.get("description") or "").replace("\n", " ")
+            print(f"| `{name}` | {t} | {required} | `{default}` | {desc} |")
+        return 0
+
+    # default: json
+    print(json.dumps(schema, indent=2))
+    return 0
+
+
+def handle_validate_config(path: str) -> int:
+    """Validate a project YAML against the project-config schema (ADR-015).
+
+    Pure schema validation: this command does NOT consult the live catalog,
+    does NOT resolve model names, and does NOT touch credentials. It catches
+    structural problems (unknown fields, wrong types, missing required
+    fields). Catalog membership and family-catalog parameter ranges are
+    enforced later by `load_project_config()` at workload time.
+    """
+    try:
+        import jsonschema
+    except ImportError:
+        print(
+            "jsonschema is not installed. Install with "
+            "`pip install \"usai-harness[validation]\"` and re-run.",
+            file=sys.stderr,
+        )
+        return 1
+
+    from usai_harness.config import load_project_config_schema
+
+    target = Path(path)
+    if not target.exists():
+        print(f"Path does not exist: {target}", file=sys.stderr)
+        return 1
+    try:
+        raw = yaml.safe_load(target.read_text(encoding="utf-8"))
+    except yaml.YAMLError as e:
+        print(f"YAML parse error in {target}: {e}", file=sys.stderr)
+        return 1
+    if not isinstance(raw, dict):
+        print(
+            f"{target}: top-level YAML value must be a mapping; "
+            f"got {type(raw).__name__}.",
+            file=sys.stderr,
+        )
+        return 1
+
+    schema = load_project_config_schema()
+    validator = jsonschema.Draft202012Validator(schema)
+    errors = sorted(validator.iter_errors(raw), key=lambda e: list(e.absolute_path))
+    if not errors:
+        print(f"OK: {target} validates against project_config_v1.")
+        return 0
+
+    for err in errors:
+        loc = "/".join(str(p) for p in err.absolute_path) or "<root>"
+        print(f"{target}: {loc}: {err.message}", file=sys.stderr)
+    return 1
 
 
 def handle_families(

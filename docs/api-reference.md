@@ -374,7 +374,49 @@ Cross-provider pools are rejected at bootstrap (ADR-012). Pick from a single pro
 
 Per-model parameter overrides (such as `temperature: 0.1` on a specific Gemini entry) are not flag-driven; edit the generated `usai_harness.yaml` for those.
 
-## 4. Extension Protocols
+### 3.10 `usai-harness schema project-config`
+
+Print the project-config JSON Schema (ADR-015). This artifact is the single source of truth for what fields are valid in `usai_harness.yaml`.
+
+```
+usai-harness schema project-config [--format {json,yaml,markdown}]
+```
+
+- `--format json` (default): the canonical artifact, suitable for tooling.
+- `--format yaml`: a YAML rendering of the same schema.
+- `--format markdown`: a human-readable table of fields, types, and descriptions for embedding in docs.
+
+The schema is shipped at `usai_harness/data/project_config.schema.json` inside the package. Downstream consumers should reference this command rather than copying field-level rules into their own documentation.
+
+### 3.11 `usai-harness validate-config`
+
+Validate a YAML file against the project-config schema (ADR-015).
+
+```
+usai-harness validate-config PATH
+```
+
+- `PATH`: path to the YAML file to check.
+
+This is pure schema validation. It catches structural problems (unknown fields, wrong types, missing required fields). It does NOT consult the live catalog, resolve model names, or touch credentials; catalog membership and family-catalog parameter ranges are enforced separately by `load_project_config()` at workload time.
+
+Exits 0 with `OK: <path> validates against project_config_v1.` on success. Exits 1 with one error per line on failure. Requires the optional `[validation]` extras group: `pip install "usai-harness[validation]"`.
+
+## 4. Project Config Schema
+
+The authoritative artifact is `usai_harness/data/project_config.schema.json`. JSON Schema draft 2020-12, `$id` `https://schemas.anthropic.invalid/usai-harness/project-config-v1.json`.
+
+To get a snapshot in a format other than JSON, use `usai-harness schema project-config --format markdown`. The schema is also embedded at the path above for IDE tooling: add `# yaml-language-server: $schema=<schema $id>` at the top of your `usai_harness.yaml` to enable autocomplete in VS Code's YAML extension once the schema URL is publicly resolvable.
+
+The schema's `additionalProperties: false` is enforced at config load: a project config with unknown top-level fields fails with `ConfigValidationError` rather than warning. Use `usai-harness validate-config <path>` to find offending fields before running a workload.
+
+What the schema does NOT encode:
+
+- Catalog membership. Model names are validated against the merged runtime catalog at load time; the schema only checks that names are non-empty strings.
+- Family-catalog parameter ranges (e.g., Gemini 2.5 accepts `temperature` in `[0.0, 2.0]`). Those live in the family catalog (ADR-014) and apply at load time, not at schema-validation time.
+- Credentials backend kwargs. The schema enumerates the recognized backends; backend-specific kwargs flow through under `credentials` as additional properties.
+
+## 5. Extension Protocols
 
 For advanced users adding a new transport or credential backend.
 
@@ -438,7 +480,7 @@ A provider entry may set both fields. The active credentials backend determines 
 
 Providers do not implement freshness or expiry logic. The harness uses reactive authentication (ADR-002). If the credential is invalid, the endpoint will return 401 and the harness will handle the failure cleanly.
 
-## 5. On-Disk Artifacts
+## 6. On-Disk Artifacts
 
 ### 5.1 Call log format (`logs/calls.jsonl`)
 
@@ -534,7 +576,7 @@ class BatchReport:
 
 Serialized to JSON and written alongside the call log at `logs/reports/{job_name}_{timestamp}.json`.
 
-## 6. Error Types
+## 7. Error Types
 
 All raised exceptions inherit from `UsaiHarnessError`.
 
@@ -547,7 +589,7 @@ All raised exceptions inherit from `UsaiHarnessError`.
 
 Every exception carries a human-readable message and, where applicable, a `.context` dict with the provider, model, task_id, and relevant HTTP status for diagnostic use.
 
-## 7. Deprecation Policy
+## 8. Deprecation Policy
 
 Public API additions follow semantic versioning. Deprecated functions emit `DeprecationWarning` for at least one minor version before removal. Configuration schema changes do the same: an old-format config loads with warnings for a full minor-version cycle before being rejected.
 

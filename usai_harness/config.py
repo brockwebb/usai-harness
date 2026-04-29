@@ -27,6 +27,7 @@ Errors:
     - ConfigValidationError: raised on any invalid config with specific field/reason
 """
 
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,12 +44,26 @@ MAX_WORKERS = 10
 DEFAULT_ERROR_BODY_SNIPPET_MAX_CHARS = 200
 MAX_ERROR_BODY_SNIPPET_MAX_CHARS = 2000
 
-_KNOWN_PROJECT_FIELDS = frozenset({
-    "model", "models", "default_model", "provider",
-    "temperature", "max_tokens",
-    "system_prompt", "workers", "batch_size",
-    "credentials",
-})
+def load_project_config_schema() -> dict:
+    """Return the project-config JSON Schema (ADR-015).
+
+    The schema artifact at `usai_harness/data/project_config.schema.json` is
+    the single source of truth for the project-config field surface. The
+    procedural type checks in `load_project_config()` consume the field
+    list from this artifact rather than maintaining their own.
+    """
+    path = (
+        Path(__file__).resolve().parent / "data" / "project_config.schema.json"
+    )
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _known_project_fields() -> frozenset[str]:
+    schema = load_project_config_schema()
+    return frozenset(schema.get("properties", {}).keys())
+
+
+_KNOWN_PROJECT_FIELDS = _known_project_fields()
 
 _VALID_CREDENTIALS_BACKENDS = frozenset({"dotenv", "env_var", "azure_keyvault"})
 
@@ -594,11 +609,16 @@ class ConfigLoader:
                 f"Project config {config_path} must be a YAML mapping."
             )
 
-        for unknown in sorted(set(raw.keys()) - _KNOWN_PROJECT_FIELDS):
-            log.warning(
-                "Unknown field '%s' in project config %s; ignoring. "
-                "Valid fields: %s.",
-                unknown, config_path, sorted(_KNOWN_PROJECT_FIELDS),
+        unknown_fields = sorted(set(raw.keys()) - _KNOWN_PROJECT_FIELDS)
+        if unknown_fields:
+            schema = load_project_config_schema()
+            raise ConfigValidationError(
+                f"Project config {config_path} declares unknown fields: "
+                f"{unknown_fields}. Valid fields per the schema "
+                f"({schema.get('$id', 'project_config_v1')}): "
+                f"{sorted(_KNOWN_PROJECT_FIELDS)}. Run "
+                f"`usai-harness validate-config {config_path}` for a fuller "
+                f"diagnostic."
             )
 
         pool_specs, default_model_name = self._collect_pool_specs(raw, config_path)

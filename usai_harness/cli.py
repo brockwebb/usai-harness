@@ -8,6 +8,8 @@ Subcommands:
     discover-models  — refresh the live model catalog
     list-models      — print the merged model catalog (repo + user-level)
     families         — print the family catalog (parameter-acceptance rules)
+    schema           — print harness schemas (e.g. `schema project-config`)
+    validate-config  — validate a project YAML against the schema
     verify           — end-to-end health check of all providers
     ping             — minimal single-call check of the default provider
     audit            — security hygiene checks (gitignore, tracked secrets, pip-audit)
@@ -26,6 +28,8 @@ from usai_harness.setup_commands import (
     handle_list_models,
     handle_ping,
     handle_project_init,
+    handle_schema_project_config,
+    handle_validate_config,
     handle_verify,
 )
 
@@ -147,6 +151,32 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Append missing entries to .gitignore",
     )
 
+    sch = subparsers.add_parser(
+        "schema",
+        help="Print harness schemas (machine-readable artifacts)",
+    )
+    sch_sub = sch.add_subparsers(dest="schema_command", required=True)
+    sch_pc = sch_sub.add_parser(
+        "project-config",
+        help="Print the project-config JSON Schema",
+    )
+    sch_pc.add_argument(
+        "--format",
+        choices=["json", "yaml", "markdown"],
+        default="json",
+        help="Output format. JSON is the canonical artifact.",
+    )
+
+    vc = subparsers.add_parser(
+        "validate-config",
+        help=(
+            "Validate a project YAML against the project-config schema. "
+            "Pure schema check; does not consult the live catalog or "
+            "credentials."
+        ),
+    )
+    vc.add_argument("path", help="Path to the YAML file to validate")
+
     return parser
 
 
@@ -180,6 +210,11 @@ def cli_main(argv: list[str] | None = None) -> int:
         return handle_ping(model=args.model)
     if args.command == "audit":
         return handle_audit(fix_gitignore=args.fix_gitignore)
+    if args.command == "schema":
+        if args.schema_command == "project-config":
+            return handle_schema_project_config(output_format=args.format)
+    if args.command == "validate-config":
+        return handle_validate_config(path=args.path)
     parser.print_help()
     return 1
 

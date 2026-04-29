@@ -1,20 +1,18 @@
 # Project configuration for the USAi Harness.
-# See the README and `docs/api-reference.md` for the full schema reference.
+# Schema: usai_harness/data/project_config.schema.json
+# IDE support: add `# yaml-language-server: $schema=<schema $id>` for autocomplete.
+# Validate this file: `usai-harness validate-config <path-to-this-file>`
+# Project name: {project_name}  (informational; the harness does not consume this)
 
-project: {project_name}
 provider: {provider_name}
 
-# Pool of models available to this project.
-# Add or remove entries as needed. Each name must exist in the harness catalog
-# (run `usai-harness discover-models` to refresh the catalog from the live endpoint).
-# Per-model overrides such as `temperature: 0.1` can be added as nested keys.
+# Pool of models available to this project. Each name must exist in the
+# harness catalog. Run `usai-harness list-models` to see what is currently
+# advertised, or `usai-harness discover-models` to refresh from the live
+# endpoint. Per-model overrides (e.g. `temperature: 0.1`) go as nested keys.
 {models_block}
 
 default_model: {default_model_name}
 
 # Concurrency: number of async workers pulling from the request queue.
 workers: 3
-
-# Output paths (relative to project root or absolute).
-ledger_path: output/cost_ledger.jsonl
-log_dir: output/logs

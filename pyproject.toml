@@ -28,6 +28,9 @@ dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
 ]
+validation = [
+    "jsonschema>=4.21",
+]
 
 [project.scripts]
 usai-harness = "usai_harness.cli:cli_main"
@@ -37,7 +40,7 @@ include = ["usai_harness*"]
 
 [tool.setuptools.package-data]
 "usai_harness.templates" = ["*.template", "*.txt"]
-"usai_harness.data" = ["*.yaml"]
+"usai_harness.data" = ["*.yaml", "*.schema.json"]
 
 [tool.pytest.ini_options]
 markers = [

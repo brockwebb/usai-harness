@@ -6,7 +6,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Breaking
+- Project configs with unknown top-level fields now fail at load with `ConfigValidationError` rather than warning. The schema (ADR-015) declares `additionalProperties: false`. Migration: remove the unrecognized field, rename it to a recognized one, or run `usai-harness validate-config <path>` for a fuller diagnostic. The most common case is `project:`, `ledger_path:`, or `log_dir:` left over from the pre-0.6.0 bootstrap template; those fields were never read by the loader and are simply removed.
+
+### Added
+- Project-config JSON Schema artifact at `usai_harness/data/project_config.schema.json` (draft 2020-12). Authoritative description of the project-config field surface; `_KNOWN_PROJECT_FIELDS` is derived from it. (ADR-015)
+- New CLI subcommand `usai-harness schema project-config [--format {json,yaml,markdown}]` prints the schema. The JSON form is the canonical artifact; YAML and Markdown are convenience renderings for tooling and docs. (ADR-015)
+- New CLI subcommand `usai-harness validate-config <path>` validates a YAML against the schema. Pure structural validation (no catalog or credential dependencies). Requires the optional `[validation]` extras: `pip install "usai-harness[validation]"`. (ADR-015)
+- New optional-dependency group `[validation]` for `jsonschema`. The three hard deps (`httpx`, `python-dotenv`, `pyyaml`) are unchanged.
+
 ### Changed
+- Bootstrap template (`project-init`) no longer emits the `project:`, `ledger_path:`, or `log_dir:` fields. The project name moves into a comment header; `cost_ledger.jsonl` and `logs/` paths remain harness-managed. The bootstrapped YAML now round-trips clean through `usai-harness validate-config`. (ADR-015)
 - Live-catalog merge reconciles seed-side names against live-side names through the family-catalog alias table. When seed model `S` and live model `L` map to the same `(provider, family_key)`, `S` is treated as renamed to `L`, the seed's accounting fields (cost, context window) are carried forward, and an INFO log line records the rename. Project configs that still reference the seed name transparently pick up the live name with one INFO log per substitution. (ADR-009 / 0.5.0)
 - A *referenced* model that is dropped without a reconciliation match now raises `ConfigValidationError` rather than silently falling back. References are: catalog-level `default_model`, project-config pool members, and project-config `default_model`. The error names the dropped model, the live catalog path, and instructs the user to run `usai-harness discover-models` and `usai-harness list-models`. Eliminates the silent default-substitution failure mode that corrupted controlled-variation experiments.
 - Dropped-models warning text now includes the suggested remediation (`discover-models`, `list-models`).

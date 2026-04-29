@@ -299,6 +299,28 @@ The TEVV smoke test shall send a trivial prompt, validate that the response succ
 Re-running `project-init` shall be safe: existing `usai_harness.yaml`, `scripts/example_batch.py`, and directories shall not be overwritten or duplicated, and the TEVV smoke test shall run on every invocation producing a fresh timestamped report under `tevv/`.
 *Source:* ADR-013.
 
+### 4.16 Project Config Schema
+
+**FR-059: Project-config schema artifact.**
+The harness shall ship a machine-readable JSON Schema for project configs at `usai_harness/data/project_config.schema.json`. The schema shall conform to JSON Schema draft 2020-12 and shall enumerate all valid top-level fields. The schema artifact shall be the single source of truth for the field surface; the procedural type checks in `load_project_config()` shall consume the field list from the schema rather than maintaining their own.
+*Source:* ADR-015.
+
+**FR-060: Schema-driven unknown-field rejection.**
+The project-config loader shall reject unknown top-level fields with `ConfigValidationError` at config-load time. The error message shall name the offending fields, the schema `$id`, and the valid field list, and shall direct the user to `usai-harness validate-config <path>` for a fuller diagnostic. This replaces the prior warn-and-ignore behavior (breaking change in 0.6.0).
+*Source:* ADR-015.
+
+**FR-061: Schema CLI subcommand.**
+The harness shall provide a CLI subcommand `usai-harness schema project-config` that prints the project-config schema. The subcommand shall accept `--format {json,yaml,markdown}` and shall read the same artifact `load_project_config_schema()` returns; no schema content shall be duplicated in code.
+*Source:* ADR-015.
+
+**FR-062: validate-config CLI subcommand.**
+The harness shall provide a CLI subcommand `usai-harness validate-config <path>` that validates a YAML file against the project-config schema. The subcommand shall not consult the live catalog, shall not resolve model names, and shall not require credentials; it is pure structural validation. It shall depend on the optional `[validation]` extras group and shall exit non-zero with a clear message if `jsonschema` is not installed.
+*Source:* ADR-015.
+
+**FR-063: Bootstrap template schema-validity.**
+The `project-init` template shall produce YAML that validates clean against the project-config schema. The bootstrap layout shall not include the `project:`, `ledger_path:`, or `log_dir:` fields at the top level.
+*Source:* ADR-015.
+
 ## 5. Security Requirements
 
 **SEC-001: Secret redaction.**

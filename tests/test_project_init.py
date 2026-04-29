@@ -48,12 +48,17 @@ def test_project_init_creates_config(project_root):
     cfg = project_root / "usai_harness.yaml"
     assert cfg.exists()
     text = cfg.read_text()
-    assert "project:" in text
+    # Per ADR-015 (0.6.0), the schema rejects `project:`, `ledger_path:`,
+    # and `log_dir:` at the top level. The template now puts the project
+    # name in a comment header instead.
     assert "models:" in text
     assert "default_model:" in text
+    assert "provider:" in text
     assert "{project_name}" not in text
     assert "{provider_name}" not in text
     assert "{default_model_name}" not in text
+    assert "ledger_path:" not in text
+    assert "log_dir:" not in text
 
 
 def test_project_init_creates_directories(project_root):
@@ -107,6 +112,18 @@ def test_project_init_idempotent(project_root):
     # Gitignore lines not duplicated.
     assert gi_first.count("output/cost_ledger.jsonl") == 1
     assert gi_second.count("output/cost_ledger.jsonl") == 1
+
+
+def test_project_init_yaml_passes_validate_config(project_root):
+    """Regression test for ADR-015 (0.6.0): the bootstrap template must
+    emit YAML that validates against the project-config schema. Without
+    this test, the template can drift back to emitting unknown fields like
+    `project:`, `ledger_path:`, or `log_dir:` and silently break consumers."""
+    rc = setup_commands.handle_project_init(transport=_MockTransport())
+    assert rc == 0
+    cfg = project_root / "usai_harness.yaml"
+    validate_rc = setup_commands.handle_validate_config(str(cfg))
+    assert validate_rc == 0
 
 
 def test_project_init_tevv_pass(project_root):
