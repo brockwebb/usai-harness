@@ -7,6 +7,7 @@ Subcommands:
     add-provider     — register an additional provider
     discover-models  — refresh the live model catalog
     list-models      — print the merged model catalog (repo + user-level)
+    families         — print the family catalog (parameter-acceptance rules)
     verify           — end-to-end health check of all providers
     ping             — minimal single-call check of the default provider
     audit            — security hygiene checks (gitignore, tracked secrets, pip-audit)
@@ -20,6 +21,7 @@ from usai_harness.report import cost_report, format_report, generate_report
 from usai_harness.setup_commands import (
     handle_add_provider,
     handle_discover_models,
+    handle_families,
     handle_init,
     handle_list_models,
     handle_ping,
@@ -89,6 +91,25 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Provider to refresh (default: all configured providers)",
     )
 
+    fam = subparsers.add_parser(
+        "families",
+        help="Print the family catalog (parameter-acceptance rules with citation tiers)",
+    )
+    fam.add_argument(
+        "--family",
+        default=None,
+        help="Show the full entry for a single family key (e.g. 'claude-sonnet-4')",
+    )
+    fam.add_argument(
+        "--format",
+        choices=["table", "yaml", "markdown"],
+        default="table",
+        help=(
+            "Output format. 'table' is the default. 'yaml' emits the raw "
+            "catalog. 'markdown' produces a research-methodology-friendly table."
+        ),
+    )
+
     lm = subparsers.add_parser(
         "list-models",
         help="Print the merged model catalog (repo + user-level) for use in pool configs",
@@ -151,6 +172,8 @@ def cli_main(argv: list[str] | None = None) -> int:
         return handle_discover_models(args.provider)
     if args.command == "list-models":
         return handle_list_models(provider=args.provider, output_format=args.format)
+    if args.command == "families":
+        return handle_families(family=args.family, output_format=args.format)
     if args.command == "verify":
         return handle_verify()
     if args.command == "ping":

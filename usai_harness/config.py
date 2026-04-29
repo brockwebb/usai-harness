@@ -58,14 +58,73 @@ class ConfigValidationError(Exception):
     pass
 
 
+class FamilyCatalog:
+    """Curated family-level model parameter catalog. Ships with the harness.
+
+    Per ADR-014, the catalog answers "what parameters does this model
+    accept" with citation-tier labels per field. It is keyed on
+    vendor + product line + major version. Provider-specific identifiers
+    (e.g. `claude_4_5_sonnet`, `gemini-2.5-flash`) are mapped to family
+    keys via the `provider_aliases` table so that adding a new dated SKU
+    under an existing major line is a one-row alias addition, not a new
+    family entry.
+    """
+
+    def __init__(self, path: Optional[Path] = None):
+        if path is None:
+            path = (
+                Path(__file__).resolve().parent / "data" / "families.yaml"
+            )
+        try:
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except (FileNotFoundError, yaml.YAMLError) as e:
+            raise ConfigValidationError(
+                f"Failed to load family catalog at {path}: {e}"
+            ) from e
+        if not isinstance(raw, dict):
+            raise ConfigValidationError(
+                f"Family catalog at {path} is not a YAML mapping."
+            )
+        self.path = path
+        self.metadata: dict = raw.get("metadata", {}) or {}
+        self.families: dict = raw.get("families", {}) or {}
+        self.aliases: dict = raw.get("provider_aliases", {}) or {}
+
+    def family_key(self, provider: str, name: str) -> Optional[str]:
+        """Return the family key for `(provider, name)` or None if unknown."""
+        return (self.aliases.get(provider) or {}).get(name)
+
+    def resolve(self, provider: str, name: str) -> Optional[dict]:
+        """Resolve a provider-specific model name to its family entry.
+
+        Returns the family entry dict, or None if `name` is not in the
+        alias table for the given provider. The caller decides what to do
+        on miss (warn and pass through, or strict-reject).
+        """
+        key = self.family_key(provider, name)
+        if key is None:
+            return None
+        return self.families.get(key)
+
+    def list_families(self) -> list[str]:
+        return list(self.families.keys())
+
+    def list_aliases(self, provider: Optional[str] = None) -> dict:
+        if provider is None:
+            return self.aliases
+        return self.aliases.get(provider, {}) or {}
+
+
 @dataclass(frozen=True)
 class ModelConfig:
     """Catalog entry for a specific model.
 
-    Per the ADR-012 amendment (2026-04-29), entries describe identity (name,
-    provider) and accounting (cost rates, context window). Behavior or
-    parameter limits (temperature range, max output tokens) are not part of
-    the catalog; provider response is the source of truth at call time.
+    Per the ADR-012 amendment (2026-04-29), the runtime catalog describes
+    identity (name, provider) and accounting (cost rates, context window).
+    Per ADR-014 (2026-04-29), each entry also carries an optional
+    `family_entry` resolved through the curated family catalog plus the
+    `family_key` it was matched on. The family entry is what supplies the
+    parameter-acceptance rules used at config-load time.
     """
     name: str
     provider: str
@@ -74,6 +133,8 @@ class ModelConfig:
     supports_system_prompt: bool
     cost_per_1k_input_tokens: float
     cost_per_1k_output_tokens: float
+    family_key: Optional[str] = field(default=None, compare=False, hash=False)
+    family_entry: Optional[dict] = field(default=None, compare=False, hash=False, repr=False)
 
 
 @dataclass(frozen=True)
@@ -157,10 +218,22 @@ def _load_user_catalog(
     return raw, path
 
 
+_PARAM_TO_FAMILY_KEY = {
+    "temperature": "accepts_temperature",
+    "top_p": "accepts_top_p",
+    "top_k": "accepts_top_k",
+    "frequency_penalty": "accepts_frequency_penalty",
+    "presence_penalty": "accepts_presence_penalty",
+}
+
+
 class ConfigLoader:
     """Loads and validates model and project configurations."""
 
-    def __init__(self, models_config_path=None):
+    def __init__(self, models_config_path=None, family_catalog=None):
+        self.family_catalog: FamilyCatalog = (
+            family_catalog if family_catalog is not None else FamilyCatalog()
+        )
         if models_config_path is None:
             # Default: <repo_root>/configs/models.yaml (parent of this package dir).
             models_config_path = (
@@ -204,14 +277,19 @@ class ConfigLoader:
         self._models: dict[str, ModelConfig] = {}
         for name, spec in raw["models"].items():
             try:
+                provider = spec["provider"]
+                fam_key = self.family_catalog.family_key(provider, name)
+                fam_entry = self.family_catalog.resolve(provider, name)
                 self._models[name] = ModelConfig(
                     name=name,
-                    provider=spec["provider"],
+                    provider=provider,
                     context_window=int(spec["context_window"]),
                     supports_temperature=bool(spec["supports_temperature"]),
                     supports_system_prompt=bool(spec["supports_system_prompt"]),
                     cost_per_1k_input_tokens=float(spec["cost_per_1k_input_tokens"]),
                     cost_per_1k_output_tokens=float(spec["cost_per_1k_output_tokens"]),
+                    family_key=fam_key,
+                    family_entry=fam_entry,
                 )
             except KeyError as e:
                 raise ConfigValidationError(
@@ -322,6 +400,8 @@ class ConfigLoader:
         new_models: dict[str, ModelConfig] = {}
         for prov_name, model_id in authoritative:
             existing = self._models.get(model_id)
+            fam_key = self.family_catalog.family_key(prov_name, model_id)
+            fam_entry = self.family_catalog.resolve(prov_name, model_id)
             if existing is not None:
                 new_models[model_id] = ModelConfig(
                     name=model_id,
@@ -331,6 +411,8 @@ class ConfigLoader:
                     supports_system_prompt=existing.supports_system_prompt,
                     cost_per_1k_input_tokens=existing.cost_per_1k_input_tokens,
                     cost_per_1k_output_tokens=existing.cost_per_1k_output_tokens,
+                    family_key=fam_key,
+                    family_entry=fam_entry,
                 )
             else:
                 new_models[model_id] = ModelConfig(
@@ -341,6 +423,8 @@ class ConfigLoader:
                     supports_system_prompt=True,
                     cost_per_1k_input_tokens=0.0,
                     cost_per_1k_output_tokens=0.0,
+                    family_key=fam_key,
+                    family_entry=fam_entry,
                 )
 
         self._models = new_models
@@ -454,6 +538,7 @@ class ConfigLoader:
 
         pool_specs, default_model_name = self._collect_pool_specs(raw, config_path)
         pool = self._validate_pool(pool_specs, config_path)
+        self._validate_pool_param_overrides(pool, pool_specs, config_path)
 
         if default_model_name is None:
             if len(pool) == 1:
@@ -501,6 +586,17 @@ class ConfigLoader:
         temperature = float(raw.get("temperature", 0.0))
         max_tokens_raw = raw.get("max_tokens")
         max_tokens = int(max_tokens_raw) if max_tokens_raw is not None else None
+
+        if "temperature" in raw:
+            self._check_param_against_family(
+                default_model, "temperature", float(raw["temperature"]),
+                config_path, context="project default",
+            )
+        if max_tokens is not None:
+            self._check_max_tokens_against_family(
+                default_model, max_tokens,
+                config_path, context="project default",
+            )
 
         workers = int(raw.get("workers", DEFAULT_WORKERS))
         if not (1 <= workers <= MAX_WORKERS):
@@ -598,6 +694,125 @@ class ConfigLoader:
             specs.append(dict(member))
 
         return specs, raw.get("default_model")
+
+    def _validate_pool_param_overrides(
+        self,
+        pool: list[ModelConfig],
+        specs: list[dict],
+        config_path: Path,
+    ) -> None:
+        """Validate per-member parameter overrides against the family catalog.
+
+        Per ADR-014 (2026-04-29): if the pool member resolves to a family
+        entry, walk recognized parameter overrides and apply the family's
+        accept-flags and ranges. Unknown aliases warn and pass through.
+        """
+        for spec, model in zip(specs, pool):
+            if model.family_entry is None:
+                log.warning(
+                    "Pool member '%s' (provider '%s') does not match any "
+                    "family-catalog alias; per-model parameter validation "
+                    "is skipped for this member. Field values pass through "
+                    "to the transport unchanged.",
+                    model.name, model.provider,
+                )
+                continue
+            for param_name, value in spec.items():
+                if param_name == "name":
+                    continue
+                if param_name in _PARAM_TO_FAMILY_KEY:
+                    self._check_param_against_family(
+                        model, param_name, value, config_path,
+                        context=f"pool member '{model.name}'",
+                    )
+                elif param_name == "max_tokens":
+                    self._check_max_tokens_against_family(
+                        model, int(value), config_path,
+                        context=f"pool member '{model.name}'",
+                    )
+
+    @staticmethod
+    def _check_param_against_family(
+        model: ModelConfig,
+        param_name: str,
+        value,
+        config_path: Path,
+        context: str,
+    ) -> None:
+        family_entry = model.family_entry
+        if family_entry is None:
+            return
+        family_field = _PARAM_TO_FAMILY_KEY.get(param_name)
+        if family_field is None:
+            return
+        spec = family_entry.get(family_field)
+        if not isinstance(spec, dict):
+            return
+        accepts = spec.get("value")
+        if accepts is False:
+            raise ConfigValidationError(
+                f"Project config {config_path}: {context} sets "
+                f"{param_name}={value!r}, but family '{model.family_key}' "
+                f"does not accept {param_name} on this model. Source: "
+                f"{spec.get('source', '(no source recorded)')}."
+            )
+        if accepts == "needs_verification":
+            log.warning(
+                "Project config %s: %s sets %s=%r, but the family catalog "
+                "marks %s.%s as needs_verification. Passing through; "
+                "verify behavior empirically before relying on the value.",
+                config_path, context, param_name, value,
+                model.family_key, family_field,
+            )
+            return
+        if accepts is not True:
+            return
+        rng = spec.get("range")
+        if rng == "needs_verification":
+            log.warning(
+                "Project config %s: %s sets %s=%r; the family catalog "
+                "marks the range as needs_verification. Passing through.",
+                config_path, context, param_name, value,
+            )
+            return
+        if isinstance(rng, list) and len(rng) == 2:
+            low, high = rng
+            if not (low <= value <= high):
+                raise ConfigValidationError(
+                    f"Project config {config_path}: {context} sets "
+                    f"{param_name}={value} which is outside the family "
+                    f"'{model.family_key}' range [{low}, {high}]. Source: "
+                    f"{spec.get('source', '(no source recorded)')}."
+                )
+
+    @staticmethod
+    def _check_max_tokens_against_family(
+        model: ModelConfig,
+        value: int,
+        config_path: Path,
+        context: str,
+    ) -> None:
+        family_entry = model.family_entry
+        if family_entry is None:
+            return
+        spec = family_entry.get("max_output_tokens")
+        if not isinstance(spec, dict):
+            return
+        max_val = spec.get("value")
+        if max_val == "needs_verification":
+            log.warning(
+                "Project config %s: %s sets max_tokens=%d; the family "
+                "catalog marks max_output_tokens as needs_verification. "
+                "Passing through.",
+                config_path, context, value,
+            )
+            return
+        if isinstance(max_val, int) and value > max_val:
+            raise ConfigValidationError(
+                f"Project config {config_path}: {context} sets "
+                f"max_tokens={value} which exceeds family "
+                f"'{model.family_key}' max_output_tokens={max_val}."
+            )
 
     def _validate_pool(
         self, specs: list[dict], config_path: Path,

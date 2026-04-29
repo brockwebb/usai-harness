@@ -614,6 +614,146 @@ def handle_list_models(
     return 0
 
 
+def handle_families(
+    family: Optional[str] = None,
+    output_format: str = "table",
+    catalog=None,
+) -> int:
+    """Print the curated family catalog (ADR-014).
+
+    Read-only. The catalog ships with the harness at
+    `usai_harness/data/families.yaml`. This command surfaces what the harness
+    knows about parameter acceptance, with citation tiers per field.
+    """
+    from usai_harness.config import ConfigValidationError, FamilyCatalog
+
+    if catalog is None:
+        try:
+            catalog = FamilyCatalog()
+        except ConfigValidationError as e:
+            print(f"Cannot load family catalog: {e}", file=sys.stderr)
+            return 1
+
+    if family is not None:
+        entry = catalog.families.get(family)
+        if entry is None:
+            print(
+                f"Unknown family '{family}'. Available: "
+                f"{sorted(catalog.list_families())}.",
+                file=sys.stderr,
+            )
+            return 1
+        if output_format == "yaml":
+            print(yaml.safe_dump({family: entry}, sort_keys=False), end="")
+        elif output_format == "markdown":
+            print(_family_markdown(family, entry))
+        else:
+            print(_family_table_detail(family, entry))
+        return 0
+
+    if output_format == "yaml":
+        print(
+            yaml.safe_dump(
+                {
+                    "metadata": catalog.metadata,
+                    "families": catalog.families,
+                    "provider_aliases": catalog.aliases,
+                },
+                sort_keys=False,
+            ),
+            end="",
+        )
+        return 0
+
+    if output_format == "markdown":
+        for key in sorted(catalog.families):
+            print(_family_markdown(key, catalog.families[key]))
+            print()
+        return 0
+
+    rows: list[tuple[str, str, str]] = []
+    for key in sorted(catalog.families):
+        entry = catalog.families[key]
+        rows.append(
+            (key, entry.get("vendor", ""), entry.get("description", "")),
+        )
+    if not rows:
+        print("Family catalog is empty.", file=sys.stderr)
+        return 1
+    key_w = max(len("family"), max(len(r[0]) for r in rows))
+    vendor_w = max(len("vendor"), max(len(r[1]) for r in rows))
+    print(f"{'family':<{key_w}}  {'vendor':<{vendor_w}}  description")
+    print(f"{'-' * key_w}  {'-' * vendor_w}  {'-' * 11}")
+    for key, vendor, desc in rows:
+        print(f"{key:<{key_w}}  {vendor:<{vendor_w}}  {desc}")
+    return 0
+
+
+def _family_table_detail(key: str, entry: dict) -> str:
+    lines = [f"Family: {key}"]
+    if "vendor" in entry:
+        lines.append(f"  Vendor: {entry['vendor']}")
+    if "description" in entry:
+        lines.append(f"  Description: {entry['description']}")
+    lines.append("")
+    lines.append("  Parameter        Accepts             Range            Tier")
+    lines.append("  ---------------  ------------------  ---------------  ----")
+    for field_name in (
+        "accepts_temperature", "accepts_top_p", "accepts_top_k",
+        "accepts_frequency_penalty", "accepts_presence_penalty",
+    ):
+        spec = entry.get(field_name)
+        if not isinstance(spec, dict):
+            continue
+        accepts = spec.get("value")
+        rng = spec.get("range", "")
+        tier = spec.get("tier", "")
+        param_label = field_name.replace("accepts_", "")
+        lines.append(
+            f"  {param_label:<15}  {str(accepts):<18}  {str(rng):<15}  {tier}"
+        )
+    for field_name in ("max_output_tokens", "context_window_tokens"):
+        spec = entry.get(field_name)
+        if isinstance(spec, dict):
+            value = spec.get("value")
+            tier = spec.get("tier", "")
+            lines.append(f"  {field_name}: {value}  ({tier})")
+    return "\n".join(lines)
+
+
+def _family_markdown(key: str, entry: dict) -> str:
+    lines = [f"### {key}"]
+    if "vendor" in entry:
+        lines.append(f"- Vendor: {entry['vendor']}")
+    if "description" in entry:
+        lines.append(f"- Description: {entry['description']}")
+    lines.append("")
+    lines.append("| Parameter | Accepts | Range | Tier | Source |")
+    lines.append("|-----------|---------|-------|------|--------|")
+    for field_name in (
+        "accepts_temperature", "accepts_top_p", "accepts_top_k",
+        "accepts_frequency_penalty", "accepts_presence_penalty",
+    ):
+        spec = entry.get(field_name)
+        if not isinstance(spec, dict):
+            continue
+        accepts = spec.get("value")
+        rng = spec.get("range", "")
+        tier = spec.get("tier", "")
+        source = spec.get("source", "")
+        param_label = field_name.replace("accepts_", "")
+        lines.append(
+            f"| {param_label} | {accepts} | {rng} | {tier} | {source} |"
+        )
+    for field_name in ("max_output_tokens", "context_window_tokens"):
+        spec = entry.get(field_name)
+        if isinstance(spec, dict):
+            value = spec.get("value")
+            tier = spec.get("tier", "")
+            lines.append(f"- `{field_name}`: {value} (tier {tier})")
+    return "\n".join(lines)
+
+
 def handle_ping(model: Optional[str] = None) -> int:
     """Minimal single-call check against the default provider.
 

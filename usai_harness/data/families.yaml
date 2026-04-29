@@ -1,0 +1,325 @@
+# Family catalog v1.
+#
+# Keyed on vendor + product line + major version. Within a major version,
+# dated SKUs share parameter behavior; the alias table at the bottom maps
+# provider-specific identifiers to family keys.
+#
+# Citation tiers:
+#   t1 - vendor primary doc (model card, official API reference)
+#   t2 - cloud provider doc (AWS Bedrock, Azure OpenAI, Vertex)
+#   t3 - third-party aggregator or community guide
+#   t4 - empirical (verified against the live endpoint by harness maintainers)
+#
+# Fields marked "needs_verification" should be checked empirically before
+# being cited in research. The harness will warn if a config relies on a
+# field marked needs_verification.
+
+metadata:
+  catalog_version: "0.1"
+  compiled_at: "2026-04-29"
+  methodology: |
+    Compiled from public vendor documentation supplemented by cloud
+    provider docs and a 2026-04-29 deep-research pass. Each parameter
+    field carries a tier label per the legend above.
+
+families:
+
+  claude-sonnet-4:
+    vendor: anthropic
+    description: "Anthropic Claude Sonnet, 4.x major line"
+    accepts_temperature:
+      value: false
+      tier: t2
+      source: "AWS Bedrock Claude 4.5 Sonnet parameter docs note temperature/top_p mutual exclusion; direct Anthropic API rejects temperature on this line per community reports. Verify via `usai-harness verify-model` if precision matters."
+    accepts_top_p:
+      value: true
+      range: [0.0, 1.0]
+      tier: t2
+      source: "AWS Bedrock parameter documentation."
+    accepts_top_k:
+      value: needs_verification
+      tier: t3
+    accepts_frequency_penalty:
+      value: false
+      tier: t3
+      source: "Anthropic API does not document frequency_penalty for Claude family."
+    accepts_presence_penalty:
+      value: false
+      tier: t3
+    max_output_tokens:
+      value: 8192
+      tier: t2
+    context_window_tokens:
+      value: 200000
+      tier: t1
+      source: "https://docs.anthropic.com/en/docs/about-claude/models"
+
+  claude-opus-4:
+    vendor: anthropic
+    description: "Anthropic Claude Opus, 4.x major line"
+    accepts_temperature:
+      value: false
+      tier: t3
+      source: "Inferred from Claude 4.x family behavior; verify empirically for opus specifically."
+    accepts_top_p:
+      value: true
+      range: [0.0, 1.0]
+      tier: t3
+    accepts_top_k:
+      value: needs_verification
+      tier: t3
+    accepts_frequency_penalty:
+      value: false
+      tier: t3
+    accepts_presence_penalty:
+      value: false
+      tier: t3
+    max_output_tokens:
+      value: 8192
+      tier: t3
+    context_window_tokens:
+      value: 200000
+      tier: t1
+
+  claude-haiku-4:
+    vendor: anthropic
+    description: "Anthropic Claude Haiku, 4.x major line"
+    accepts_temperature:
+      value: false
+      tier: t2
+      source: "AWS Bedrock Claude Haiku 4.5 parameter docs."
+    accepts_top_p:
+      value: true
+      range: [0.0, 1.0]
+      tier: t2
+    accepts_top_k:
+      value: needs_verification
+      tier: t3
+    accepts_frequency_penalty:
+      value: false
+      tier: t3
+    accepts_presence_penalty:
+      value: false
+      tier: t3
+    max_output_tokens:
+      value: 8192
+      tier: t3
+    context_window_tokens:
+      value: 200000
+      tier: t1
+
+  gemini-2.5:
+    vendor: google
+    description: "Google Gemini, 2.5 major line (Flash and Pro variants share parameter surface)"
+    accepts_temperature:
+      value: true
+      range: [0.0, 2.0]
+      tier: t3
+      source: "Third-party Gemini 2.5 trackers; consistent with Gemini API generic semantics."
+    accepts_top_p:
+      value: true
+      range: [0.0, 1.0]
+      tier: t1
+      source: "https://ai.google.dev/gemini-api/docs/text-generation"
+    accepts_top_k:
+      value: true
+      range: [1, 100]
+      tier: t1
+    accepts_frequency_penalty:
+      value: needs_verification
+      tier: t3
+    accepts_presence_penalty:
+      value: needs_verification
+      tier: t3
+    max_output_tokens:
+      value: 8192
+      tier: t3
+    context_window_tokens:
+      value: 1000000
+      tier: t1
+      source: "https://ai.google.dev/gemini-api/docs/models"
+
+  gemini-2.0:
+    vendor: google
+    description: "Google Gemini, 2.0 major line"
+    accepts_temperature:
+      value: true
+      range: [0.0, 2.0]
+      tier: t3
+    accepts_top_p:
+      value: true
+      range: [0.0, 1.0]
+      tier: t1
+    accepts_top_k:
+      value: true
+      range: [1, 100]
+      tier: t1
+    accepts_frequency_penalty:
+      value: needs_verification
+      tier: t3
+    accepts_presence_penalty:
+      value: needs_verification
+      tier: t3
+    max_output_tokens:
+      value: 8000
+      tier: t3
+    context_window_tokens:
+      value: 1000000
+      tier: t1
+
+  gpt-5:
+    vendor: openai
+    description: "OpenAI GPT-5 chat-completion family (gpt-5, gpt-5-mini, gpt-5-nano)"
+    accepts_temperature:
+      value: true
+      range: [0.0, 2.0]
+      tier: t1
+      source: "https://platform.openai.com/docs/api-reference/chat/create"
+    accepts_top_p:
+      value: true
+      range: [0.0, 1.0]
+      tier: t1
+    accepts_top_k:
+      value: false
+      tier: t1
+      source: "OpenAI chat completions API does not document top_k."
+    accepts_frequency_penalty:
+      value: true
+      range: [-2.0, 2.0]
+      tier: t1
+    accepts_presence_penalty:
+      value: true
+      range: [-2.0, 2.0]
+      tier: t1
+    max_output_tokens:
+      value: 16384
+      tier: t3
+    context_window_tokens:
+      value: 400000
+      tier: t3
+
+  o-reasoning:
+    vendor: openai
+    description: "OpenAI o-series reasoning models (o1, o3, o3-mini and successors). Sampling parameters are fixed internally and not user-adjustable."
+    accepts_temperature:
+      value: false
+      tier: t3
+      source: "Multiple community guides and OpenAI release notes indicate o-series reasoning models reject temperature."
+    accepts_top_p:
+      value: false
+      tier: t3
+    accepts_top_k:
+      value: false
+      tier: t3
+    accepts_frequency_penalty:
+      value: false
+      tier: t3
+    accepts_presence_penalty:
+      value: false
+      tier: t3
+    max_output_tokens:
+      value: needs_verification
+      tier: t3
+    context_window_tokens:
+      value: needs_verification
+      tier: t3
+
+  llama-4:
+    vendor: meta
+    description: "Meta Llama 4 family (Maverick and other variants)"
+    accepts_temperature:
+      value: true
+      range: [0.0, 2.0]
+      tier: t3
+      source: "Partner API conventions (Together AI, Bedrock); Meta does not publish a unified API spec."
+    accepts_top_p:
+      value: true
+      range: [0.0, 1.0]
+      tier: t3
+    accepts_top_k:
+      value: true
+      range: [1, 100]
+      tier: t3
+    accepts_frequency_penalty:
+      value: needs_verification
+      tier: t3
+    accepts_presence_penalty:
+      value: needs_verification
+      tier: t3
+    max_output_tokens:
+      value: needs_verification
+      tier: t3
+    context_window_tokens:
+      value: 524288
+      tier: t3
+      source: "Together AI Llama 4 Maverick model card."
+
+  grok-4:
+    vendor: xai
+    description: "xAI Grok 4 family"
+    accepts_temperature:
+      value: true
+      range: needs_verification
+      tier: t3
+    accepts_top_p:
+      value: true
+      range: needs_verification
+      tier: t3
+    accepts_top_k:
+      value: needs_verification
+      tier: t3
+    accepts_frequency_penalty:
+      value: needs_verification
+      tier: t3
+    accepts_presence_penalty:
+      value: needs_verification
+      tier: t3
+    max_output_tokens:
+      value: 256000
+      tier: t3
+    context_window_tokens:
+      value: 256000
+      tier: t3
+
+provider_aliases:
+  # Each entry maps a provider-specific model identifier to a family key.
+  # Aliases preserve major version. Adding a new dated SKU under an existing
+  # major line means adding a row here, not a new family entry.
+
+  usai:
+    claude_4_5_sonnet: claude-sonnet-4
+    claude_4_5_opus: claude-opus-4
+    claude_4_5_haiku: claude-haiku-4
+    gemini-2.5-flash: gemini-2.5
+    gemini-2.5-pro: gemini-2.5
+    llama_4_maverick: llama-4
+
+  anthropic:
+    claude-sonnet-4-5-20241022: claude-sonnet-4
+    claude-sonnet-4-6-20250901: claude-sonnet-4
+    claude-opus-4-20250514: claude-opus-4
+    claude-haiku-4-5-20251001: claude-haiku-4
+
+  openai:
+    gpt-5: gpt-5
+    gpt-5-mini: gpt-5
+    gpt-5-nano: gpt-5
+    gpt-4o: gpt-5  # placeholder; if 4o needs distinct entry, split later
+    o3: o-reasoning
+    o3-mini: o-reasoning
+    o1: o-reasoning
+    o1-mini: o-reasoning
+
+  google:
+    gemini-2.5-flash: gemini-2.5
+    gemini-2.5-pro: gemini-2.5
+    gemini-2.0-flash: gemini-2.0
+    gemini-2.0-pro: gemini-2.0
+
+  meta:
+    "meta-llama/Llama-4-Maverick": llama-4
+    "meta-llama/Llama-4-Scout": llama-4
+
+  xai:
+    grok-4: grok-4
+    grok-4-mini: grok-4

@@ -847,3 +847,143 @@ def test_project_config_both_model_and_models_keys(tmp_path):
     """)
     with pytest.raises(ConfigValidationError, match="legacy"):
         loader.load_project_config(cfg)
+
+
+# ---------- family-catalog validation (ADR-014) ---------------------------
+
+
+@pytest.fixture
+def claude_short_alias_catalog(live_catalog):
+    """Live catalog that exposes `claude_4_5_sonnet` and `gemini-2.5-flash`
+    under the usai provider, so tests can hit the family catalog's USAi
+    aliases (which key on the short form, not the dated form)."""
+    write, _ = live_catalog
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                "models": ["claude_4_5_sonnet", "gemini-2.5-flash", "gemini-2.5-pro"],
+            },
+        }
+    })
+
+
+def test_pool_member_with_known_family_validates_temperature_rejected(
+    tmp_path, claude_short_alias_catalog,
+):
+    """Claude 4.x family rejects temperature; pool member with
+    temperature: 0.5 raises ConfigValidationError citing the family."""
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: claude_4_5_sonnet
+            temperature: 0.5
+    """)
+    with pytest.raises(ConfigValidationError) as exc:
+        loader.load_project_config(cfg)
+    msg = str(exc.value)
+    assert "claude-sonnet-4" in msg
+    assert "temperature" in msg
+    assert "does not accept" in msg
+
+
+def test_pool_member_with_known_family_validates_temperature_in_range(
+    tmp_path, claude_short_alias_catalog,
+):
+    """Gemini 2.5 accepts temperature in [0.0, 2.0]; 0.1 loads cleanly."""
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: gemini-2.5-flash
+            temperature: 0.1
+    """)
+    pc = loader.load_project_config(cfg)
+    assert pc.default_model.name == "gemini-2.5-flash"
+    assert pc.default_model.family_key == "gemini-2.5"
+
+
+def test_pool_member_with_known_family_validates_temperature_out_of_range(
+    tmp_path, claude_short_alias_catalog,
+):
+    """Gemini 2.5 accepts temperature in [0.0, 2.0]; 5.0 raises with the range cited."""
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: gemini-2.5-flash
+            temperature: 5.0
+    """)
+    with pytest.raises(ConfigValidationError) as exc:
+        loader.load_project_config(cfg)
+    msg = str(exc.value)
+    assert "gemini-2.5" in msg
+    assert "5.0" in msg
+    assert "0.0" in msg and "2.0" in msg
+
+
+def test_pool_member_with_unknown_alias_warns_and_passes(
+    tmp_path, caplog, claude_short_alias_catalog,
+):
+    """A pool member whose name has no entry in the alias table loads
+    cleanly with a warning, regardless of parameter values."""
+    import logging as _logging
+    write, _ = claude_short_alias_catalog if False else (None, None)  # placeholder
+    # Override the live catalog to expose a model with no family alias.
+    from usai_harness.setup_commands import user_config_models_path
+    catalog_path = user_config_models_path()
+    catalog_path.parent.mkdir(parents=True, exist_ok=True)
+    import yaml as _yaml
+    catalog_path.write_text(_yaml.safe_dump({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                "models": ["completely-unaliased-model"],
+            },
+        }
+    }, sort_keys=False))
+
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: completely-unaliased-model
+            temperature: 5.0
+            top_p: 99.0
+    """)
+    caplog.set_level(_logging.WARNING, logger="usai_harness.config")
+    pc = loader.load_project_config(cfg)
+    assert pc.default_model.name == "completely-unaliased-model"
+    assert pc.default_model.family_entry is None
+    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+    assert any("does not match any family" in r.getMessage() for r in warnings)
+
+
+def test_pool_member_with_needs_verification_field_warns(
+    tmp_path, caplog, claude_short_alias_catalog,
+):
+    """gemini-2.5 marks frequency_penalty as needs_verification; setting it
+    warns but does not raise."""
+    import logging as _logging
+    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    cfg = _write_project_config(tmp_path, """
+        models:
+          - name: gemini-2.5-flash
+            frequency_penalty: 0.3
+    """)
+    caplog.set_level(_logging.WARNING, logger="usai_harness.config")
+    pc = loader.load_project_config(cfg)
+    assert pc.default_model.family_key == "gemini-2.5"
+    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+    assert any(
+        "needs_verification" in r.getMessage() and "frequency_penalty" in r.getMessage()
+        for r in warnings
+    )
+
+
+def test_model_config_carries_family_entry():
+    """Pool members loaded from a known alias have family_entry attached."""
+    catalog_only = ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    m = catalog_only.get_model("gemini-2.5-flash")
+    assert m.family_key == "gemini-2.5"
+    assert m.family_entry is not None
+    assert m.family_entry["vendor"] == "google"

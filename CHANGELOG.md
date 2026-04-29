@@ -8,6 +8,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ### Added
 - `usai-harness project-init` supports multi-rater pool declaration via `--models MODEL1,MODEL2,...` and `--default MODEL` flags. Without flags, falls back to interactive prompt showing the catalog. Eliminates manual YAML editing for multi-rater projects. (ADR-013 amendment)
+- Family catalog at `usai_harness/data/families.yaml` ships with the package. Curated, citation-tier-labeled parameter specs keyed on vendor + product line + major version. Aliases preserve major version (e.g., `claude_4_5_sonnet` → `claude-sonnet-4`). (ADR-014)
+- `ConfigLoader` resolves pool members through the family catalog and validates per-model parameter overrides against family rules at config-load time. Unknown aliases pass through with a warning. (ADR-014)
+- New CLI subcommand `usai-harness families` prints the family catalog (table, yaml, markdown formats; optional `--family` filter).
+
+### Changed
+- Parameter validation is back, but principled. Sourced from the curated family catalog (citable, version-controlled), not from harness-internal guessing. The 0.3.0 strip-validation decision stands for catalog entries; this layer is the replacement. (ADR-012, ADR-014)
 
 ## [0.3.0] - 2026-04-29
 
