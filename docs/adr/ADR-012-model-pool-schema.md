@@ -82,3 +82,13 @@ The validation logic in `client.py` grows. `_build_tasks` and `complete()` add p
 The federal-survey-concept-mapper's smoke test, when rewritten against the new schema, instantiates one `USAiClient` for the whole pipeline. Stage 1's two raters become two task-level model selections within `client.batch()`, not two separate clients. The bespoke multi-section YAML deletes.
 
 The cost ledger and call log gain implicit per-model attribution because each entry already records the model used. Per-model cost reports work without schema changes; the existing `cost-report` command's `--model` filter continues to function.
+
+## Amendment, 2026-04-29 — parameter validation removed
+
+Items 3 and 4 of *Validation rules at load time* are reversed. The harness no longer enforces per-model `temperature` or `max_tokens` ranges at config-load time, and the matching per-call validation in `client.complete()` and `client._build_tasks()` is removed. Pool members carry whatever per-model fields the user wrote; those fields are forwarded to the transport unchanged. Whatever is omitted is not sent.
+
+The justification is that provider behavior is the actual contract. GPT-5 and Claude reject the `temperature` parameter entirely. Gemini Flash accepts `temperature` in `[0, 1]`. Some providers accept `[0, 2]`. The catalog's `temperature_range` could not capture this without becoming a per-model decision table that drifts on every provider release. A config that passed harness validation but failed at the provider gave the user a debugging trail two layers deep; a config that goes straight to the API gives the user the provider's actual error message in the call log immediately. Catalog entries are now identity and accounting, not behavior.
+
+The remaining load-time validations are unchanged: `models[].name` must exist in the merged catalog (item 1), `default_model` must be a pool member (item 2), and `provider` must match every pool member's catalog provider (item 5). Per-task `model` overrides are still validated against the pool at task-build time. The legacy single-`model:` translation is unchanged.
+
+The `temperature_range` and `max_output_tokens` fields are removed from `ModelConfig` and from every entry in `configs/models.yaml`. User-level catalogs that still carry these fields remain readable; the loader ignores extra fields rather than rejecting them.

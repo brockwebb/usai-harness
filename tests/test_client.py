@@ -409,17 +409,18 @@ async def test_client_batch_per_task_invalid_model(tmp_path, env_path):
         await client.close()
 
 
-async def test_client_batch_per_task_temperature_validation(tmp_path, env_path):
-    """Per-task temperature must fall within the chosen model's range."""
-    # claude-sonnet-4-5-20241022 has temperature_range [0.0, 1.0] in models.yaml.
+async def test_complete_forwards_temperature_to_transport(tmp_path, env_path):
+    """Per the ADR-012 amendment (2026-04-29): per-call temperature is
+    forwarded to the transport unchanged, regardless of any catalog range."""
     cfg = _multi_pool_config(tmp_path)
-    client = _client(tmp_path, env_path, config_path=cfg)
+    mock = MockTransport()
+    client = _client(tmp_path, env_path, transport=mock, config_path=cfg)
     try:
-        tasks = [
-            {"messages": [{"role": "user", "content": "a"}],
-             "temperature": 5.0, "task_id": "hot"},
-        ]
-        with pytest.raises(ValueError, match="out of range"):
-            await client.batch(tasks, job_name="too-hot")
+        await client.complete(
+            messages=[{"role": "user", "content": "hi"}],
+            model="claude-sonnet-4-5-20241022",
+            temperature=5.0,
+        )
     finally:
         await client.close()
+    assert mock.calls[0]["temperature"] == 5.0

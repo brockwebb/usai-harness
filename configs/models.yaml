@@ -1,8 +1,10 @@
-# USAi model presentation overrides.
+# USAi catalog: identity and accounting only.
 # Per ADR-009, the live /api/v1/models response is authoritative for which
-# models exist. This file provides display names, temperature ranges, and
-# cost rates for known IDs. Entries matching the live catalog are merged;
-# IDs not present in the live catalog are ignored.
+# models exist. This file seeds providers and accounting fields (cost rates,
+# context window) that the live response does not carry. Per the ADR-012
+# amendment (2026-04-29), entries do NOT carry parameter limits like
+# `temperature_range` or `max_output_tokens`; the harness is a pass-through
+# and the provider's response is the source of truth at call time.
 
 # Maximum characters of a non-2xx response body that the transport captures,
 # redacts, and writes to the call log under `error_body`. Range: 1..2000.
@@ -18,9 +20,7 @@ models:
   "meta-llama/Llama-4-Maverick-17B-128E-Instruct":
     provider: usai
     context_window: 131072
-    max_output_tokens: 32768
     supports_temperature: true
-    temperature_range: [0.0, 2.0]
     supports_system_prompt: true
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
@@ -28,9 +28,7 @@ models:
   "meta-llama/Llama-3.2-11B-Vision-Instruct":
     provider: usai
     context_window: 128000
-    max_output_tokens: 4096
     supports_temperature: true
-    temperature_range: [0.0, 1.0]
     supports_system_prompt: true
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
@@ -38,9 +36,7 @@ models:
   "claude-opus-4-5-20250521":
     provider: usai
     context_window: 200000
-    max_output_tokens: 32000
     supports_temperature: true
-    temperature_range: [0.0, 1.0]
     supports_system_prompt: true
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
@@ -48,9 +44,7 @@ models:
   "claude-sonnet-4-5-20241022":
     provider: usai
     context_window: 200000
-    max_output_tokens: 8192
     supports_temperature: true
-    temperature_range: [0.0, 1.0]
     supports_system_prompt: true
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
@@ -58,9 +52,7 @@ models:
   "claude-3-5-haiku-20241022":
     provider: usai
     context_window: 200000
-    max_output_tokens: 8192
     supports_temperature: true
-    temperature_range: [0.0, 1.0]
     supports_system_prompt: true
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
@@ -68,9 +60,7 @@ models:
   "gemini-2.5-pro":
     provider: usai
     context_window: 1048576
-    max_output_tokens: 65536
     supports_temperature: true
-    temperature_range: [0.0, 2.0]
     supports_system_prompt: true
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
@@ -78,9 +68,7 @@ models:
   "gemini-2.5-flash":
     provider: usai
     context_window: 1048576
-    max_output_tokens: 65536
     supports_temperature: true
-    temperature_range: [0.0, 2.0]
     supports_system_prompt: true
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0

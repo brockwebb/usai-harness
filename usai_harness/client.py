@@ -76,7 +76,6 @@ class USAiClient:
                 models=[default_model],
                 default_model=default_model,
                 provider=default_model.provider,
-                max_tokens=default_model.max_output_tokens,
             )
 
         self._workers = workers if workers is not None else self.config.workers
@@ -166,14 +165,9 @@ class USAiClient:
             )
 
         model_name = model if model is not None else self.config.default_model.name
-        chosen_model = self.config.get_pool_model(model_name)
 
         temp = temperature if temperature is not None else self.config.temperature
-        if temperature is not None:
-            self._validate_temperature_for_model(temp, chosen_model, "complete()")
         mt = max_tokens if max_tokens is not None else self.config.max_tokens
-        if max_tokens is not None:
-            self._validate_max_tokens_for_model(mt, chosen_model, "complete()")
         sp = system_prompt if system_prompt is not None else self.config.system_prompt
 
         if task_id is None:
@@ -307,27 +301,12 @@ class USAiClient:
                     f"Task at index {i} is missing required 'messages' field."
                 )
 
-            if "model" in t:
-                if not self.config.has_model(t["model"]):
-                    raise ValueError(
-                        f"Task at index {i} (task_id={t.get('task_id')!r}) "
-                        f"selects model {t['model']!r} which is not in the "
-                        f"project's pool. "
-                        f"Pool: {[m.name for m in self.config.models]}."
-                    )
-                chosen_model = self.config.get_pool_model(t["model"])
-            else:
-                chosen_model = self.config.default_model
-
-            if "temperature" in t:
-                self._validate_temperature_for_model(
-                    float(t["temperature"]), chosen_model,
-                    f"task index {i}",
-                )
-            if "max_tokens" in t:
-                self._validate_max_tokens_for_model(
-                    int(t["max_tokens"]), chosen_model,
-                    f"task index {i}",
+            if "model" in t and not self.config.has_model(t["model"]):
+                raise ValueError(
+                    f"Task at index {i} (task_id={t.get('task_id')!r}) "
+                    f"selects model {t['model']!r} which is not in the "
+                    f"project's pool. "
+                    f"Pool: {[m.name for m in self.config.models]}."
                 )
 
             payload = {
@@ -347,36 +326,6 @@ class USAiClient:
                 metadata=t.get("metadata", {}),
             ))
         return out
-
-    @staticmethod
-    def _validate_temperature_for_model(
-        value: float, model, context: str,
-    ) -> None:
-        if not model.supports_temperature:
-            raise ValueError(
-                f"{context}: model '{model.name}' does not support "
-                f"temperature; got temperature={value}."
-            )
-        low, high = model.temperature_range
-        if not (low <= value <= high):
-            raise ValueError(
-                f"{context}: temperature={value} out of range for model "
-                f"'{model.name}'. Valid range: [{low}, {high}]."
-            )
-
-    @staticmethod
-    def _validate_max_tokens_for_model(
-        value: int, model, context: str,
-    ) -> None:
-        if value <= 0:
-            raise ValueError(
-                f"{context}: max_tokens must be > 0, got {value}."
-            )
-        if value > model.max_output_tokens:
-            raise ValueError(
-                f"{context}: max_tokens={value} exceeds model "
-                f"'{model.name}' limit of {model.max_output_tokens}."
-            )
 
     async def _make_request(self, payload: dict) -> tuple[dict, int]:
         """request_fn handed to the worker pool."""

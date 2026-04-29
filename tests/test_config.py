@@ -46,9 +46,7 @@ def test_get_model_valid():
     assert m.name == "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
     assert m.provider == "usai"
     assert m.context_window == 131072
-    assert m.max_output_tokens == 32768
     assert m.supports_temperature is True
-    assert m.temperature_range == (0.0, 2.0)
     assert m.supports_system_prompt is True
     assert m.cost_per_1k_input_tokens == 0.0
     assert m.cost_per_1k_output_tokens == 0.0
@@ -92,36 +90,10 @@ def test_project_config_defaults(tmp_path):
     pc = loader.load_project_config(cfg)
 
     assert pc.temperature == 0.0
-    assert pc.max_tokens == pc.default_model.max_output_tokens
+    assert pc.max_tokens is None
     assert pc.workers == 3
     assert pc.batch_size == 50
     assert pc.system_prompt is None
-
-
-def test_temperature_out_of_range_raises(tmp_path):
-    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
-    cfg = _write_project_config(tmp_path, """
-        model: "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
-        temperature: 3.0
-    """)
-    with pytest.raises(ConfigValidationError) as exc:
-        loader.load_project_config(cfg)
-    msg = str(exc.value)
-    assert "temperature" in msg.lower()
-    assert "2.0" in msg
-
-
-def test_max_tokens_exceeds_model_raises(tmp_path):
-    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
-    cfg = _write_project_config(tmp_path, """
-        model: "meta-llama/Llama-4-Maverick-17B-128E-Instruct"
-        max_tokens: 999999
-    """)
-    with pytest.raises(ConfigValidationError) as exc:
-        loader.load_project_config(cfg)
-    msg = str(exc.value)
-    assert "max_tokens" in msg.lower()
-    assert "32768" in msg
 
 
 def test_unknown_model_in_project_config_raises(tmp_path):
@@ -203,9 +175,7 @@ models:
   demo-model:
     provider: usai
     context_window: 1000
-    max_output_tokens: 100
     supports_temperature: true
-    temperature_range: [0.0, 1.0]
     supports_system_prompt: true
     cost_per_1k_input_tokens: 0.0
     cost_per_1k_output_tokens: 0.0
@@ -383,9 +353,7 @@ def test_live_catalog_two_providers_five_models(live_catalog, tmp_path):
           "meta-llama/Llama-4-Maverick-17B-128E-Instruct":
             provider: usai
             context_window: 131072
-            max_output_tokens: 32768
             supports_temperature: true
-            temperature_range: [0.0, 2.0]
             supports_system_prompt: true
             cost_per_1k_input_tokens: 0.0
             cost_per_1k_output_tokens: 0.0
@@ -416,7 +384,6 @@ def test_live_model_not_in_repo_gets_synthesized_defaults(live_catalog):
     m = loader.get_model("new-synth-model")
     assert m.provider == "usai"
     assert m.context_window == 0
-    assert m.max_output_tokens == 4096
     assert m.supports_temperature is True
 
 
@@ -517,9 +484,7 @@ def test_provider_with_api_key_secret_loads(tmp_path):
           test-model:
             provider: usai
             context_window: 1000
-            max_output_tokens: 100
             supports_temperature: true
-            temperature_range: [0.0, 1.0]
             supports_system_prompt: true
             cost_per_1k_input_tokens: 0.0
             cost_per_1k_output_tokens: 0.0
@@ -544,9 +509,7 @@ def test_provider_with_neither_field_raises(tmp_path):
           test-model:
             provider: usai
             context_window: 1000
-            max_output_tokens: 100
             supports_temperature: true
-            temperature_range: [0.0, 1.0]
             supports_system_prompt: true
             cost_per_1k_input_tokens: 0.0
             cost_per_1k_output_tokens: 0.0
@@ -569,9 +532,7 @@ def test_secret_map_requires_api_key_secret_for_azure(tmp_path):
           test-model:
             provider: usai
             context_window: 1000
-            max_output_tokens: 100
             supports_temperature: true
-            temperature_range: [0.0, 1.0]
             supports_system_prompt: true
             cost_per_1k_input_tokens: 0.0
             cost_per_1k_output_tokens: 0.0
@@ -600,9 +561,7 @@ def test_secret_map_uses_secret_when_both_set(tmp_path):
           test-model:
             provider: usai
             context_window: 1000
-            max_output_tokens: 100
             supports_temperature: true
-            temperature_range: [0.0, 1.0]
             supports_system_prompt: true
             cost_per_1k_input_tokens: 0.0
             cost_per_1k_output_tokens: 0.0
@@ -781,9 +740,7 @@ def test_project_config_pool_provider_mismatch(tmp_path):
           model-on-usai:
             provider: usai
             context_window: 1000
-            max_output_tokens: 100
             supports_temperature: true
-            temperature_range: [0.0, 1.0]
             supports_system_prompt: true
             cost_per_1k_input_tokens: 0.0
             cost_per_1k_output_tokens: 0.0
@@ -791,9 +748,7 @@ def test_project_config_pool_provider_mismatch(tmp_path):
           model-on-alpha:
             provider: alpha
             context_window: 1000
-            max_output_tokens: 100
             supports_temperature: true
-            temperature_range: [0.0, 1.0]
             supports_system_prompt: true
             cost_per_1k_input_tokens: 0.0
             cost_per_1k_output_tokens: 0.0
@@ -814,26 +769,61 @@ def test_project_config_pool_provider_mismatch(tmp_path):
         loader.load_project_config(cfg)
 
 
-def test_project_config_pool_temperature_out_of_range(tmp_path):
+def test_legacy_catalog_fields_are_ignored_not_rejected(tmp_path):
+    """Per the ADR-012 amendment (2026-04-29): a user-level catalog left over
+    from a pre-amendment install still loads. Legacy `temperature_range` and
+    `max_output_tokens` per-model fields are ignored without warning."""
+    yaml_body = """
+        providers:
+          usai:
+            base_url: https://example.com/api/v1
+            api_key_env: USAI_API_KEY
+        models:
+          legacy-model:
+            provider: usai
+            context_window: 1000
+            max_output_tokens: 100
+            supports_temperature: true
+            temperature_range: [0.0, 1.0]
+            supports_system_prompt: true
+            cost_per_1k_input_tokens: 0.0
+            cost_per_1k_output_tokens: 0.0
+        default_model: legacy-model
+    """
+    path = tmp_path / "models.yaml"
+    path.write_text(textwrap.dedent(yaml_body).lstrip())
+    loader = ConfigLoader(models_config_path=path)
+
+    m = loader.get_model("legacy-model")
+    assert m.name == "legacy-model"
+    assert not hasattr(m, "temperature_range")
+    assert not hasattr(m, "max_output_tokens")
+
+
+def test_pool_member_passes_through_unrecognized_param(tmp_path):
+    """Per the ADR-012 amendment (2026-04-29): values out-of-range for any
+    real provider load cleanly. The harness does not validate the value."""
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
     cfg = _write_project_config(tmp_path, """
         models:
           - name: claude-sonnet-4-5-20241022
             temperature: 5.0
     """)
-    with pytest.raises(ConfigValidationError, match="out of range"):
-        loader.load_project_config(cfg)
+    pc = loader.load_project_config(cfg)
+    assert [m.name for m in pc.models] == ["claude-sonnet-4-5-20241022"]
 
 
-def test_project_config_pool_max_tokens_out_of_range(tmp_path):
+def test_pool_member_passes_through_extra_field(tmp_path):
+    """Per the ADR-012 amendment (2026-04-29): unrecognized per-model fields
+    load cleanly without rejection."""
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
     cfg = _write_project_config(tmp_path, """
         models:
           - name: claude-sonnet-4-5-20241022
-            max_tokens: 999999
+            top_p: 0.9
     """)
-    with pytest.raises(ConfigValidationError, match="exceeds"):
-        loader.load_project_config(cfg)
+    pc = loader.load_project_config(cfg)
+    assert [m.name for m in pc.models] == ["claude-sonnet-4-5-20241022"]
 
 
 def test_project_config_legacy_single_model(tmp_path):

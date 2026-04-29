@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Removed
+- Per-model parameter validation (`temperature_range`, `max_output_tokens`) from `ProjectConfig` and the model catalog. The harness no longer enforces parameter ranges; provider response is the source of truth. (ADR-012 amendment, 2026-04-29)
+
+### Changed
+- Catalog schema (`configs/models.yaml` and user-level catalog): `temperature_range` and `max_output_tokens` fields removed. Catalog entries describe identity and accounting only.
+- ProjectConfig pool members forward all per-model fields (recognized or not) to the transport unchanged.
+
 ## [0.2.0] - 2026-04-28
 
 The 0.2.0 release lands three architectural changes recorded in ADRs 011, 012, and 013, all aimed at making the harness adoption-ready for downstream projects. A new project carries its own `usai_harness.yaml` at project root (ADR-011), declares a pool of models rather than a single model (ADR-012), and bootstraps in one command with a TEVV smoke test that produces a markdown provenance report (ADR-013). The federal-survey-concept-mapper integration is the forcing function: every change in this release came from a real consumer hitting a real friction point during adoption.

@@ -2,21 +2,26 @@
 
 Responsibilities:
     - Load configs/models.yaml for known model definitions
-    - Load project-specific config (model selection, parameters)
+    - Load project-specific config (model pool, defaults)
     - Validate at load time:
-        - Model name exists in known models
-        - Temperature within model's valid range
-        - Prompt + max_output_tokens does not exceed context window
+        - Model name exists in the merged catalog
+        - default_model is a pool member
+        - All pool members share the declared provider
         - Required fields present
     - Fail loud with actionable error messages on any validation failure
+
+Per the ADR-012 amendment (2026-04-29), per-model `temperature` and `max_tokens`
+overrides are NOT validated against catalog ranges. The harness forwards
+whatever the user wrote to the transport; the provider's response is the source
+of truth for parameter acceptance.
 
 Inputs:
     - models_config_path: str — path to models.yaml
     - project_config_path: Optional[str] — path to project config
 
 Outputs:
-    - ModelConfig dataclass with validated parameters
-    - get_model(name) — returns validated model config or raises
+    - ModelConfig dataclass with catalog identity and accounting fields
+    - get_model(name) — returns the model config or raises
 
 Errors:
     - ConfigValidationError: raised on any invalid config with specific field/reason
@@ -55,13 +60,17 @@ class ConfigValidationError(Exception):
 
 @dataclass(frozen=True)
 class ModelConfig:
-    """Validated configuration for a specific model."""
+    """Catalog entry for a specific model.
+
+    Per the ADR-012 amendment (2026-04-29), entries describe identity (name,
+    provider) and accounting (cost rates, context window). Behavior or
+    parameter limits (temperature range, max output tokens) are not part of
+    the catalog; provider response is the source of truth at call time.
+    """
     name: str
     provider: str
     context_window: int
-    max_output_tokens: int
     supports_temperature: bool
-    temperature_range: tuple[float, float]
     supports_system_prompt: bool
     cost_per_1k_input_tokens: float
     cost_per_1k_output_tokens: float
@@ -94,9 +103,10 @@ class ProjectConfig:
     must equal this value (cross-provider pools are rejected).
 
     `temperature`, `max_tokens`, and `system_prompt` are project-level defaults
-    used when a task does not override them. They are validated against the
-    `default_model`'s catalog ranges. Per-task overrides are validated against
-    the *task's chosen model* at call time (FR-049, FR-050).
+    used when a task does not override them. Per the ADR-012 amendment
+    (2026-04-29), these values are not validated against catalog ranges; they
+    are forwarded to the transport as-is, and provider response is the source
+    of truth for what is accepted.
     """
     models: list[ModelConfig]
     default_model: ModelConfig
@@ -198,9 +208,7 @@ class ConfigLoader:
                     name=name,
                     provider=spec["provider"],
                     context_window=int(spec["context_window"]),
-                    max_output_tokens=int(spec["max_output_tokens"]),
                     supports_temperature=bool(spec["supports_temperature"]),
-                    temperature_range=tuple(spec["temperature_range"]),
                     supports_system_prompt=bool(spec["supports_system_prompt"]),
                     cost_per_1k_input_tokens=float(spec["cost_per_1k_input_tokens"]),
                     cost_per_1k_output_tokens=float(spec["cost_per_1k_output_tokens"]),
@@ -319,9 +327,7 @@ class ConfigLoader:
                     name=model_id,
                     provider=prov_name,
                     context_window=existing.context_window,
-                    max_output_tokens=existing.max_output_tokens,
                     supports_temperature=existing.supports_temperature,
-                    temperature_range=existing.temperature_range,
                     supports_system_prompt=existing.supports_system_prompt,
                     cost_per_1k_input_tokens=existing.cost_per_1k_input_tokens,
                     cost_per_1k_output_tokens=existing.cost_per_1k_output_tokens,
@@ -331,9 +337,7 @@ class ConfigLoader:
                     name=model_id,
                     provider=prov_name,
                     context_window=0,
-                    max_output_tokens=4096,
                     supports_temperature=True,
-                    temperature_range=(0.0, 2.0),
                     supports_system_prompt=True,
                     cost_per_1k_input_tokens=0.0,
                     cost_per_1k_output_tokens=0.0,
@@ -494,12 +498,9 @@ class ConfigLoader:
                 )
             provider = next(iter(providers_in_pool))
 
-        temperature = self._validate_project_temperature(
-            raw, default_model, config_path,
-        )
-        max_tokens = self._validate_project_max_tokens(
-            raw, default_model, config_path,
-        )
+        temperature = float(raw.get("temperature", 0.0))
+        max_tokens_raw = raw.get("max_tokens")
+        max_tokens = int(max_tokens_raw) if max_tokens_raw is not None else None
 
         workers = int(raw.get("workers", DEFAULT_WORKERS))
         if not (1 <= workers <= MAX_WORKERS):
@@ -601,11 +602,12 @@ class ConfigLoader:
     def _validate_pool(
         self, specs: list[dict], config_path: Path,
     ) -> list[ModelConfig]:
-        """Resolve each pool member to a ModelConfig and validate per-member overrides.
+        """Resolve each pool member to a ModelConfig.
 
-        Per-member `temperature` and `max_tokens` overrides are checked against
-        that member's catalog ranges (FR-049). Stored overrides are not part of
-        the runtime today; this is validation-only behavior.
+        Catalog membership is validated; per-member `temperature` and
+        `max_tokens` are accepted as-is and forwarded to the transport at call
+        time (per the ADR-012 amendment, 2026-04-29). Provider response is the
+        source of truth for whether those values are accepted.
         """
         seen: set[str] = set()
         resolved: list[ModelConfig] = []
@@ -626,74 +628,7 @@ class ConfigLoader:
                 ) from e
             resolved.append(model)
 
-            if "temperature" in spec:
-                self._check_temperature(
-                    float(spec["temperature"]), model, config_path,
-                    context=f"pool member '{name}'",
-                )
-            if "max_tokens" in spec:
-                self._check_max_tokens(
-                    int(spec["max_tokens"]), model, config_path,
-                    context=f"pool member '{name}'",
-                )
-
         return resolved
-
-    @staticmethod
-    def _check_temperature(
-        value: float, model: ModelConfig, config_path: Path, context: str,
-    ) -> None:
-        if not model.supports_temperature:
-            raise ConfigValidationError(
-                f"Project config {config_path}: model '{model.name}' "
-                f"does not support a temperature parameter; "
-                f"{context} sets temperature={value}."
-            )
-        low, high = model.temperature_range
-        if not (low <= value <= high):
-            raise ConfigValidationError(
-                f"Project config {config_path}: temperature={value} out "
-                f"of range for {context} ('{model.name}'). "
-                f"Valid range: [{low}, {high}]."
-            )
-
-    @staticmethod
-    def _check_max_tokens(
-        value: int, model: ModelConfig, config_path: Path, context: str,
-    ) -> None:
-        if value <= 0:
-            raise ConfigValidationError(
-                f"Project config {config_path}: max_tokens must be > 0 "
-                f"({context}), got {value}."
-            )
-        if value > model.max_output_tokens:
-            raise ConfigValidationError(
-                f"Project config {config_path}: max_tokens={value} for "
-                f"{context} exceeds '{model.name}' limit of "
-                f"{model.max_output_tokens}."
-            )
-
-    def _validate_project_temperature(
-        self, raw: dict, default_model: ModelConfig, config_path: Path,
-    ) -> float:
-        if "temperature" not in raw:
-            return 0.0
-        value = float(raw["temperature"])
-        self._check_temperature(
-            value, default_model, config_path, context="project default",
-        )
-        return value
-
-    def _validate_project_max_tokens(
-        self, raw: dict, default_model: ModelConfig, config_path: Path,
-    ) -> int:
-        if "max_tokens" not in raw:
-            return default_model.max_output_tokens
-        value = int(raw["max_tokens"])
-        self._check_max_tokens(
-            value, default_model, config_path, context="project default",
-        )
-        return value
 
     def validate_request(self, model_config: ModelConfig,
                          prompt_tokens: int, max_tokens: int) -> None:
