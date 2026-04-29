@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-29
+
 ### Added
 - New CLI subcommand `usai-harness list-models` prints the merged catalog (repo + user-level). Supports `--provider` filtering and `--format {table,yaml,names}` output. Useful for finding exact model names to declare in `usai_harness.yaml` pool configs.
 
@@ -93,7 +95,8 @@ First release. Pip-installable Python client library for rate-limited, model-agn
 - Non-HTTPS endpoints emit a TLS warning on first request.
 - `model_requested` vs `model_returned` surfaces silent model substitution by the endpoint.
 
-[Unreleased]: ../../compare/0.2.0...HEAD
+[Unreleased]: ../../compare/0.3.0...HEAD
+[0.3.0]: ../../compare/0.2.0...0.3.0
 [0.2.0]: ../../compare/0.1.1...0.2.0
 [0.1.1]: ../../compare/0.1.0...0.1.1
 [0.1.0]: ../../releases/tag/0.1.0
