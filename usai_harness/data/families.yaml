@@ -290,9 +290,13 @@ provider_aliases:
     claude_4_5_sonnet: claude-sonnet-4
     claude_4_5_opus: claude-opus-4
     claude_4_5_haiku: claude-haiku-4
+    claude-sonnet-4-5-20241022: claude-sonnet-4
+    claude-opus-4-5-20250521: claude-opus-4
+    claude-3-5-haiku-20241022: claude-haiku-4
     gemini-2.5-flash: gemini-2.5
     gemini-2.5-pro: gemini-2.5
     llama_4_maverick: llama-4
+    "meta-llama/Llama-4-Maverick-17B-128E-Instruct": llama-4
 
   anthropic:
     claude-sonnet-4-5-20241022: claude-sonnet-4

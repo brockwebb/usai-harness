@@ -189,9 +189,11 @@ async def test_context_manager(tmp_path, env_path):
 
 
 async def test_client_uses_project_config(tmp_path, env_path):
+    # Gemini 2.5 family accepts temperature in [0.0, 2.0] per the family catalog,
+    # so 0.5 loads cleanly and the value is what the transport sees.
     cfg = tmp_path / "project.yaml"
     cfg.write_text(textwrap.dedent("""
-        model: claude-sonnet-4-5-20241022
+        model: gemini-2.5-flash
         temperature: 0.5
         max_tokens: 1024
     """).lstrip())
@@ -203,7 +205,7 @@ async def test_client_uses_project_config(tmp_path, env_path):
     finally:
         await client.close()
 
-    assert mock.calls[0]["model"] == "claude-sonnet-4-5-20241022"
+    assert mock.calls[0]["model"] == "gemini-2.5-flash"
     assert mock.calls[0]["temperature"] == 0.5
     assert mock.calls[0]["max_tokens"] == 1024
 

@@ -369,13 +369,17 @@ def test_live_catalog_two_providers_five_models(live_catalog, tmp_path):
 
 
 def test_live_model_not_in_repo_gets_synthesized_defaults(live_catalog):
+    """Live-only model IDs that share a family with a seed entry pick up the
+    seed's accounting fields; truly novel IDs get synthesized defaults. Here
+    we use claude_4_5_sonnet as the live name (alias of seed
+    claude-sonnet-4-5-20241022) so the catalog default reconciles."""
     write, _ = live_catalog
     write({
         "providers": {
             "usai": {
                 "base_url": "https://usai.example/v1",
                 "api_key_env": "USAI_API_KEY",
-                "models": ["new-synth-model"],
+                "models": ["claude_4_5_sonnet", "new-synth-model"],
             },
         }
     })
@@ -388,18 +392,24 @@ def test_live_model_not_in_repo_gets_synthesized_defaults(live_catalog):
 
 
 def test_repo_model_not_in_live_is_dropped(live_catalog):
+    """Drops still happen for unreferenced, non-default models. The seed
+    default reconciles via family alias so the loader does not raise."""
     write, _ = live_catalog
     write({
         "providers": {
             "usai": {
                 "base_url": "https://usai.example/v1",
                 "api_key_env": "USAI_API_KEY",
-                "models": ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"],
+                "models": ["meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+                           "claude_4_5_sonnet"],
             },
         }
     })
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
-    assert loader.list_models() == ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"]
+    assert set(loader.list_models()) == {
+        "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+        "claude_4_5_sonnet",
+    }
     with pytest.raises(ConfigValidationError):
         loader.get_model("claude-opus-4-5")
 
@@ -411,7 +421,8 @@ def test_live_catalog_overrides_repo_base_url(live_catalog):
             "usai": {
                 "base_url": "https://live.example.com/api/v1",
                 "api_key_env": "USAI_API_KEY",
-                "models": ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"],
+                "models": ["meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+                           "claude_4_5_sonnet"],
             },
         }
     })
@@ -419,7 +430,34 @@ def test_live_catalog_overrides_repo_base_url(live_catalog):
     assert loader.get_provider("usai").base_url == "https://live.example.com/api/v1"
 
 
-def test_default_model_dropped_falls_back_with_warning(live_catalog, caplog):
+def test_default_model_dropped_raises_without_reconciliation(live_catalog):
+    """The 0.5.0 reconciliation rule: a dropped catalog default_model that
+    has no family-alias match in the live catalog raises rather than
+    silently falling back. Replaces the pre-0.5.0 silent-fallback behavior."""
+    write, _ = live_catalog
+    write({
+        "providers": {
+            "usai": {
+                "base_url": "https://usai.example/v1",
+                "api_key_env": "USAI_API_KEY",
+                # Live catalog has only Gemini 2.0 (not in seed; not a family
+                # match for claude-sonnet-4 either). Seed default cannot reconcile.
+                "models": ["gemini-2.0-flash"],
+            },
+        }
+    })
+    with pytest.raises(ConfigValidationError) as exc:
+        ConfigLoader(models_config_path=REAL_MODELS_YAML)
+    msg = str(exc.value)
+    assert "claude-sonnet-4-5-20241022" in msg
+    assert "discover-models" in msg
+    assert "list-models" in msg
+
+
+def test_default_model_renames_via_family_alias_logs_info(live_catalog, caplog):
+    """When the live catalog advertises the seed default under a family alias
+    (e.g. claude_4_5_sonnet for claude-sonnet-4-5-20241022), the loader
+    silently substitutes the live name and logs INFO."""
     import logging as _logging
     write, _ = live_catalog
     write({
@@ -427,35 +465,24 @@ def test_default_model_dropped_falls_back_with_warning(live_catalog, caplog):
             "usai": {
                 "base_url": "https://usai.example/v1",
                 "api_key_env": "USAI_API_KEY",
-                "models": ["claude-opus-4-5", "gemini-2-5-pro"],
+                "models": ["claude_4_5_sonnet"],
             },
         }
     })
-    caplog.set_level(_logging.WARNING, logger="usai_harness.config")
+    caplog.set_level(_logging.INFO, logger="usai_harness.config")
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
-
-    assert loader.get_default_model().name in {"claude-opus-4-5", "gemini-2-5-pro"}
-    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
+    assert loader.get_default_model().name == "claude_4_5_sonnet"
+    info_records = [r for r in caplog.records if r.levelno == _logging.INFO]
     assert any(
-        "default_model" in r.getMessage() and "dropped" in r.getMessage()
-        for r in warnings
+        "renamed" in r.getMessage() and "claude_4_5_sonnet" in r.getMessage()
+        for r in info_records
     )
 
 
-def test_default_model_becomes_none_when_all_dropped(live_catalog):
+def test_default_model_dropped_with_no_live_models_raises(live_catalog):
+    """When the live catalog has no models that match the seed default's
+    family, the loader raises rather than picking an unrelated fallback."""
     write, _ = live_catalog
-    write({
-        "providers": {
-            "usai": {
-                "base_url": "https://usai.example/v1",
-                "api_key_env": "USAI_API_KEY",
-                "models": [],  # empty — every repo model gets dropped
-            },
-        }
-    })
-    # An empty models list means no authoritative set, which the impl treats as
-    # "no live data; leave repo state untouched". So we need a non-empty list
-    # that contains no overlap with the repo. Use a model the repo does not have.
     write({
         "providers": {
             "usai": {
@@ -465,10 +492,8 @@ def test_default_model_becomes_none_when_all_dropped(live_catalog):
             },
         }
     })
-    loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
-    # Only one live model survives, and default_model was llama-4-maverick.
-    assert loader.list_models() == ["only-live-one"]
-    assert loader.get_default_model().name == "only-live-one"
+    with pytest.raises(ConfigValidationError):
+        ConfigLoader(models_config_path=REAL_MODELS_YAML)
 
 
 # ---------- api_key_secret for Azure backend (Task 07) ----------------------
@@ -575,7 +600,9 @@ def test_secret_map_uses_secret_when_both_set(tmp_path):
 
 
 def test_apply_live_catalog_warns_on_dropped_models(live_catalog, caplog):
-    """A seed model absent from the live catalog must trigger a WARN with the path."""
+    """Unreconciled drops of unreferenced seed models still WARN with the
+    path. The seed default reconciles via family alias so the loader does
+    not raise; the warning fires for the genuinely-unreconcilable drops."""
     import logging as _logging
     write, catalog_path = live_catalog
     write({
@@ -583,8 +610,13 @@ def test_apply_live_catalog_warns_on_dropped_models(live_catalog, caplog):
             "usai": {
                 "base_url": "https://usai.example/v1",
                 "api_key_env": "USAI_API_KEY",
-                # Only Llama-4 is in live; the other 6 repo models are dropped.
-                "models": ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"],
+                # claude_4_5_sonnet covers the seed default via family alias;
+                # Llama-4 stays. The Opus, Haiku, Gemini, and Llama-3.2 seeds
+                # are unreconcilable drops.
+                "models": [
+                    "meta-llama/Llama-4-Maverick-17B-128E-Instruct",
+                    "claude_4_5_sonnet",
+                ],
             },
         }
     })
@@ -600,8 +632,14 @@ def test_apply_live_catalog_warns_on_dropped_models(live_catalog, caplog):
     assert warnings, "expected WARN about dropped models"
     msg = warnings[0].getMessage()
     assert str(catalog_path) in msg
-    # At least one of the dropped repo IDs must appear.
-    assert "claude-sonnet-4-5-20241022" in msg
+    # The new remediation copy should be present.
+    assert "discover-models" in msg
+    assert "list-models" in msg
+    # At least one unreconciled drop appears (Gemini Flash has its own alias
+    # so it survives if listed; Opus is unaliased here so it drops).
+    assert "claude-opus-4-5-20250521" in msg
+    # The reconciled seed name should NOT appear in the dropped list.
+    assert "claude-sonnet-4-5-20241022" not in msg
 
 
 # ---------- error_body_snippet_max_chars (Task 10) ------------------------
@@ -801,29 +839,33 @@ def test_legacy_catalog_fields_are_ignored_not_rejected(tmp_path):
 
 
 def test_pool_member_passes_through_unrecognized_param(tmp_path):
-    """Per the ADR-012 amendment (2026-04-29): values out-of-range for any
-    real provider load cleanly. The harness does not validate the value."""
+    """Per the ADR-012 amendment (2026-04-29) and ADR-014: pool members
+    whose model name is not in any family-catalog alias table load cleanly
+    regardless of out-of-range parameter values. The harness does not
+    validate parameters when there is no family entry to validate against.
+    Llama-3.2 is not in the family catalog (only llama-4 is)."""
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
     cfg = _write_project_config(tmp_path, """
         models:
-          - name: claude-sonnet-4-5-20241022
+          - name: meta-llama/Llama-3.2-11B-Vision-Instruct
             temperature: 5.0
     """)
     pc = loader.load_project_config(cfg)
-    assert [m.name for m in pc.models] == ["claude-sonnet-4-5-20241022"]
+    assert [m.name for m in pc.models] == ["meta-llama/Llama-3.2-11B-Vision-Instruct"]
 
 
 def test_pool_member_passes_through_extra_field(tmp_path):
     """Per the ADR-012 amendment (2026-04-29): unrecognized per-model fields
-    load cleanly without rejection."""
+    load cleanly without rejection. Using a model not in the family catalog
+    so neither field nor value triggers validation."""
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
     cfg = _write_project_config(tmp_path, """
         models:
-          - name: claude-sonnet-4-5-20241022
-            top_p: 0.9
+          - name: meta-llama/Llama-3.2-11B-Vision-Instruct
+            xyzzy_param: 0.9
     """)
     pc = loader.load_project_config(cfg)
-    assert [m.name for m in pc.models] == ["claude-sonnet-4-5-20241022"]
+    assert [m.name for m in pc.models] == ["meta-llama/Llama-3.2-11B-Vision-Instruct"]
 
 
 def test_project_config_legacy_single_model(tmp_path):
@@ -938,7 +980,10 @@ def test_pool_member_with_unknown_alias_warns_and_passes(
             "usai": {
                 "base_url": "https://usai.example/v1",
                 "api_key_env": "USAI_API_KEY",
-                "models": ["completely-unaliased-model"],
+                # completely-unaliased-model has no family alias so it
+                # passes through unvalidated. claude_4_5_sonnet covers the
+                # seed default so the catalog default reconciles cleanly.
+                "models": ["completely-unaliased-model", "claude_4_5_sonnet"],
             },
         }
     }, sort_keys=False))

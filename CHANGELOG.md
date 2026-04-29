@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Changed
+- Live-catalog merge reconciles seed-side names against live-side names through the family-catalog alias table. When seed model `S` and live model `L` map to the same `(provider, family_key)`, `S` is treated as renamed to `L`, the seed's accounting fields (cost, context window) are carried forward, and an INFO log line records the rename. Project configs that still reference the seed name transparently pick up the live name with one INFO log per substitution. (ADR-009 / 0.5.0)
+- A *referenced* model that is dropped without a reconciliation match now raises `ConfigValidationError` rather than silently falling back. References are: catalog-level `default_model`, project-config pool members, and project-config `default_model`. The error names the dropped model, the live catalog path, and instructs the user to run `usai-harness discover-models` and `usai-harness list-models`. Eliminates the silent default-substitution failure mode that corrupted controlled-variation experiments.
+- Dropped-models warning text now includes the suggested remediation (`discover-models`, `list-models`).
+- Family catalog: dated Anthropic vendor identifiers (`claude-sonnet-4-5-20241022`, `claude-opus-4-5-20250521`, `claude-3-5-haiku-20241022`) and `meta-llama/Llama-4-Maverick-17B-128E-Instruct` added to the `usai` provider alias table so they reconcile with their USAi-mapped short forms.
+
 ### Added
 - `usai-harness project-init` supports multi-rater pool declaration via `--models MODEL1,MODEL2,...` and `--default MODEL` flags. Without flags, falls back to interactive prompt showing the catalog. Eliminates manual YAML editing for multi-rater projects. (ADR-013 amendment)
 - Family catalog at `usai_harness/data/families.yaml` ships with the package. Curated, citation-tier-labeled parameter specs keyed on vendor + product line + major version. Aliases preserve major version (e.g., `claude_4_5_sonnet` → `claude-sonnet-4`). (ADR-014)

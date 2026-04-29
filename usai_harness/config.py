@@ -346,6 +346,9 @@ class ConfigLoader:
                     f"'providers' block. Known providers: {sorted(self._providers)}."
                 )
 
+        self._renames: dict[str, str] = {}
+        self._live_catalog_path: Optional[Path] = None
+
         user_catalog, user_catalog_path = _load_user_catalog()
         if user_catalog:
             self._apply_live_catalog(user_catalog, user_catalog_path)
@@ -364,6 +367,17 @@ class ConfigLoader:
                presentation overrides.
             4. Repo-level model entries not present in the live catalog are dropped.
             5. Live model IDs not present in the repo are added with defaults.
+
+        Per the 0.5.0 reconciliation rule, before declaring a seed entry
+        dropped this method consults the family catalog: if the seed model S
+        and a live model L share `(provider, family_key)`, S is treated as
+        renamed to L and S's accounting fields are carried forward onto the
+        new ModelConfig. The rename map is exposed on `self._renames` so
+        `load_project_config()` can transparently rewrite project-config pool
+        references that still use the seed name. A referenced model that is
+        dropped without a reconciliation match raises `ConfigValidationError`
+        rather than silently falling back, so controlled-variation experiments
+        cannot be corrupted by a catalog rename.
         """
         live_providers = user_catalog.get("providers", {})
         if not isinstance(live_providers, dict):
@@ -397,20 +411,59 @@ class ConfigLoader:
         if not authoritative:
             return
 
+        # First pass: identify seed→live renames via the family catalog.
+        # A seed model S is renamed to live model L when both resolve to the
+        # same `(provider, family_key)`. Renames let downstream project
+        # configs that still reference the seed name keep working.
+        live_by_provider: dict[str, list[str]] = {}
+        for prov_name, model_id in authoritative:
+            live_by_provider.setdefault(prov_name, []).append(model_id)
+
+        renames: dict[str, str] = {}
+        for seed_name, seed_model in self._models.items():
+            if (seed_model.provider, seed_name) in authoritative:
+                continue
+            seed_fam_key = self.family_catalog.family_key(
+                seed_model.provider, seed_name,
+            )
+            if seed_fam_key is None:
+                continue
+            for live_name in live_by_provider.get(seed_model.provider, []):
+                if live_name == seed_name:
+                    continue
+                live_fam_key = self.family_catalog.family_key(
+                    seed_model.provider, live_name,
+                )
+                if live_fam_key == seed_fam_key:
+                    renames[seed_name] = live_name
+                    log.info(
+                        "Live catalog reconciliation: seed model '%s' "
+                        "renamed to live name '%s' via family key '%s'.",
+                        seed_name, live_name, seed_fam_key,
+                    )
+                    break
+
         new_models: dict[str, ModelConfig] = {}
         for prov_name, model_id in authoritative:
             existing = self._models.get(model_id)
+            renamed_from = next(
+                (s for s, l in renames.items() if l == model_id), None,
+            )
+            seed_for_accounting = (
+                existing if existing is not None
+                else (self._models.get(renamed_from) if renamed_from else None)
+            )
             fam_key = self.family_catalog.family_key(prov_name, model_id)
             fam_entry = self.family_catalog.resolve(prov_name, model_id)
-            if existing is not None:
+            if seed_for_accounting is not None:
                 new_models[model_id] = ModelConfig(
                     name=model_id,
                     provider=prov_name,
-                    context_window=existing.context_window,
-                    supports_temperature=existing.supports_temperature,
-                    supports_system_prompt=existing.supports_system_prompt,
-                    cost_per_1k_input_tokens=existing.cost_per_1k_input_tokens,
-                    cost_per_1k_output_tokens=existing.cost_per_1k_output_tokens,
+                    context_window=seed_for_accounting.context_window,
+                    supports_temperature=seed_for_accounting.supports_temperature,
+                    supports_system_prompt=seed_for_accounting.supports_system_prompt,
+                    cost_per_1k_input_tokens=seed_for_accounting.cost_per_1k_input_tokens,
+                    cost_per_1k_output_tokens=seed_for_accounting.cost_per_1k_output_tokens,
                     family_key=fam_key,
                     family_entry=fam_entry,
                 )
@@ -428,28 +481,40 @@ class ConfigLoader:
                 )
 
         self._models = new_models
+        self._renames: dict[str, str] = renames
+        self._live_catalog_path: Optional[Path] = catalog_path
 
-        dropped = sorted(seed_model_ids - set(new_models.keys()))
-        if dropped:
+        unreconciled_drops = sorted(
+            seed_model_ids - set(new_models.keys()) - set(renames.keys())
+        )
+        if unreconciled_drops:
             log.warning(
                 "Models present in seed config but not in live catalog at %s "
-                "have been dropped: %s. This is expected if the endpoint no "
-                "longer advertises them; verify the live catalog is current "
-                "if unexpected.",
-                catalog_path, dropped,
+                "have been dropped: %s. Run `usai-harness discover-models` to "
+                "refresh the catalog if this is unexpected, then "
+                "`usai-harness list-models` to see what is currently advertised.",
+                catalog_path, unreconciled_drops,
             )
 
-        if self._default_model_name and self._default_model_name not in self._models:
-            if self._models:
-                fallback = next(iter(self._models))
-                log.warning(
-                    "default_model '%s' was dropped by live catalog merge. "
-                    "Falling back to '%s'.",
-                    self._default_model_name, fallback,
+        if self._default_model_name:
+            if self._default_model_name in renames:
+                renamed_to = renames[self._default_model_name]
+                log.info(
+                    "Catalog default_model '%s' renamed to '%s' via live "
+                    "catalog reconciliation.",
+                    self._default_model_name, renamed_to,
                 )
-                self._default_model_name = fallback
-            else:
-                self._default_model_name = None
+                self._default_model_name = renamed_to
+            elif self._default_model_name not in self._models:
+                raise ConfigValidationError(
+                    f"default_model '{self._default_model_name}' was dropped "
+                    f"by the live catalog merge and could not be reconciled "
+                    f"to a live name via the family catalog. The live catalog "
+                    f"at {catalog_path} does not advertise this model. Run "
+                    f"`usai-harness discover-models` to refresh the catalog, "
+                    f"then `usai-harness list-models` to see what is currently "
+                    f"advertised, then update your default_model."
+                )
 
     def list_models(self) -> list[str]:
         """Return list of available model names."""
@@ -537,6 +602,9 @@ class ConfigLoader:
             )
 
         pool_specs, default_model_name = self._collect_pool_specs(raw, config_path)
+        pool_specs, default_model_name = self._reconcile_project_renames(
+            pool_specs, default_model_name, config_path,
+        )
         pool = self._validate_pool(pool_specs, config_path)
         self._validate_pool_param_overrides(pool, pool_specs, config_path)
 
@@ -639,6 +707,52 @@ class ConfigLoader:
             credentials_backend=credentials_backend,
             credentials_kwargs=credentials_kwargs,
         )
+
+    def _reconcile_project_renames(
+        self,
+        specs: list[dict],
+        default_model_name: Optional[str],
+        config_path: Path,
+    ) -> tuple[list[dict], Optional[str]]:
+        """Substitute live names for pool members the live catalog renamed.
+
+        Per the 0.5.0 reconciliation rule, a project config that still
+        references a seed-side identifier transparently picks up the live
+        name when `_apply_live_catalog` recorded a rename. Each substitution
+        emits one INFO log line so the rewrite is auditable. Pool members
+        whose names are NOT in the rename map and are not in the merged
+        catalog will fail loud later in `_validate_pool` with the standard
+        "unknown model" diagnostic.
+        """
+        if not self._renames:
+            return specs, default_model_name
+
+        substituted: list[dict] = []
+        for spec in specs:
+            name = spec.get("name")
+            if isinstance(name, str) and name in self._renames:
+                live_name = self._renames[name]
+                log.info(
+                    "Project config %s: pool member '%s' renamed to '%s' "
+                    "via live catalog reconciliation.",
+                    config_path, name, live_name,
+                )
+                new_spec = dict(spec)
+                new_spec["name"] = live_name
+                substituted.append(new_spec)
+            else:
+                substituted.append(spec)
+
+        if default_model_name is not None and default_model_name in self._renames:
+            renamed = self._renames[default_model_name]
+            log.info(
+                "Project config %s: default_model '%s' renamed to '%s' "
+                "via live catalog reconciliation.",
+                config_path, default_model_name, renamed,
+            )
+            default_model_name = renamed
+
+        return substituted, default_model_name
 
     def _collect_pool_specs(
         self, raw: dict, config_path: Path,
