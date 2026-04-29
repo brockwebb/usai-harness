@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-04-29
+
 ### Added
 - `usai-harness project-init` validates an existing `usai_harness.yaml` against the project-config schema before deciding to leave it alone. Schema-invalid existing files cause a non-zero exit with a per-error diagnostic plus three resolution paths, *before* the TEVV smoke test runs. Uses `jsonschema` from the `[validation]` extras when available; falls back to a keys-only check derived from the schema's `properties` otherwise. Fixes the 0.6.0 UX failure mode where a stale pre-0.6.0 YAML caused a confusing TEVV "FAIL" with no clear signal that the existing file was the problem.
 - `usai-harness project-init --force` overwrites an existing `usai_harness.yaml` and bypasses the pre-flight schema check.
@@ -124,7 +126,8 @@ First release. Pip-installable Python client library for rate-limited, model-agn
 - Non-HTTPS endpoints emit a TLS warning on first request.
 - `model_requested` vs `model_returned` surfaces silent model substitution by the endpoint.
 
-[Unreleased]: ../../compare/0.6.0...HEAD
+[Unreleased]: ../../compare/0.6.1...HEAD
+[0.6.1]: ../../compare/0.6.0...0.6.1
 [0.6.0]: ../../compare/0.3.0...0.6.0
 [0.3.0]: ../../compare/0.2.0...0.3.0
 [0.2.0]: ../../compare/0.1.1...0.2.0
