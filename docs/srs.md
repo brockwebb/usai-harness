@@ -173,17 +173,15 @@ The harness shall record `model_requested` and `model_returned` on every call an
 
 ### 4.9 Cost Tracking
 
-**FR-030: Append-only cost ledger.**
-The harness shall write one JSONL entry per call to `cost_ledger.jsonl`. Entries shall never be deleted, updated, or truncated by the harness.
-*Source:* ADR-004.
+**FR-030: Per-(model, flush-point) cost ledger.**
+The harness shall write one JSONL entry per (model, flush-point) pair to `cost_ledger.jsonl`. A flush-point is the end of a `batch()` call or the close of the client. A model with zero calls since the last flush shall not produce an entry. Entries shall never be deleted, updated, or truncated by the harness.
+*Source:* ADR-004 (amended 2026-04-29).
 
 **FR-031: Metadata-only ledger entries.**
-Cost ledger entries shall contain timestamp, project, job, model, prompt tokens, completion tokens, total tokens, rate applied, and computed cost. Entries shall not contain prompt or response content. The ledger dataclass shall not have a content field.
-*Source:* ADR-004, ADR-007.
+Cost ledger entries shall contain timestamp, project, job_id, job_name, model (the actual model whose calls are summarized in this entry), total_calls, successful_calls, failed_calls, success_rate, total_tokens_in, total_tokens_out, estimated_cost, duration_seconds, and flush_reason (one of `"batch_end"` or `"client_close"`). Entries shall not contain prompt or response content. The ledger dataclass shall not have a content field.
+*Source:* ADR-004 (amended 2026-04-29), ADR-007.
 
-**FR-032: Retroactive cost computation.**
-Ledger entries shall record the rate applied at the time of the call. Changes to rates in `models.yaml` shall not invalidate historical ledger entries.
-*Source:* ADR-004.
+The ledger is an estimation tool, not a billing-reconciliation artifact. Rate changes in the catalog after a call has been recorded do not retroactively update ledger entries; the rate baked into each entry reflects the rate active at flush time.
 
 ### 4.10 Reporting
 

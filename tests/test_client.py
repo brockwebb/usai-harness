@@ -128,6 +128,9 @@ async def test_complete_logs_call(tmp_path, env_path):
 
 
 async def test_complete_tracks_cost(tmp_path, env_path):
+    """Per the 0.7.0 ADR-004 amendment, totals are per-model. The default
+    model receives the call, and totals are observable before close()
+    flushes them out."""
     mock = MockTransport(responses=[(_default_response(100, 40), 200)])
     client = _client(tmp_path, env_path, transport=mock)
     try:
@@ -136,9 +139,10 @@ async def test_complete_tracks_cost(tmp_path, env_path):
     finally:
         await client.close()
 
-    assert totals["total_input_tokens"] == 100
-    assert totals["total_output_tokens"] == 40
-    assert totals["successful_calls"] == 1
+    bucket = totals["claude-sonnet-4-5-20241022"]
+    assert bucket["total_input_tokens"] == 100
+    assert bucket["total_output_tokens"] == 40
+    assert bucket["successful_calls"] == 1
 
 
 async def test_batch_processes_all_tasks(tmp_path, env_path, capsys):

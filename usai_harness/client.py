@@ -124,16 +124,17 @@ class USAiClient:
         log_dir = log_dir if log_dir is not None else Path("logs")
         self._logger = CallLogger(log_dir=log_dir, project=project)
 
-        # 6. Cost Tracker
+        # 6. Cost Tracker (per-model, ADR-004 amendment 2026-04-29)
         self._cost_tracker = CostTracker(
-            model_name=self.config.default_model.name,
-            cost_per_1k_input=self.config.default_model.cost_per_1k_input_tokens,
-            cost_per_1k_output=self.config.default_model.cost_per_1k_output_tokens,
+            pool=self.config.models,
             ledger_path=ledger_path if ledger_path is not None else Path("cost_ledger.jsonl"),
         )
 
         self._complete_counter = 0
         self._closed = False
+        self._lifetime_start = time.monotonic()
+        self._last_job_id: Optional[str] = None
+        self._last_job_name: Optional[str] = None
 
         log.info(
             "USAi Harness initialized: project=%s model=%s workers=%d transport=%s",
@@ -275,12 +276,14 @@ class USAiClient:
         for r in results:
             self._record_result(r, log_content=log_content)
 
-        self._cost_tracker.write_summary(
+        self._last_job_id = self._logger.job_id
+        self._last_job_name = job_name
+        self._cost_tracker.flush_to_ledger(
             job_id=self._logger.job_id,
             job_name=job_name,
             project=self.project,
-            model=self.config.default_model.name,
             duration_seconds=duration,
+            flush_reason="batch_end",
         )
 
         report = generate_report(self._logger.get_log_path())
@@ -389,7 +392,7 @@ class USAiClient:
             entry["prompt"] = messages
             entry["response"] = response
         self._logger.log_call(entry)
-        self._cost_tracker.record_call(response or {}, success=success)
+        self._cost_tracker.record_call(model=model, response=response or {}, success=success)
 
     def _record_result(
         self,
@@ -424,7 +427,7 @@ class USAiClient:
             entry["prompt"] = result.payload.get("messages")
             entry["response"] = result.response
         self._logger.log_call(entry)
-        self._cost_tracker.record_call(response, success=result.success)
+        self._cost_tracker.record_call(model=model, response=response, success=result.success)
 
     # ---- helpers ----------------------------------------------------------
 
@@ -453,6 +456,21 @@ class USAiClient:
             return
         self._closed = True
         try:
+            # Flush any per-model totals accumulated since the last batch_end
+            # (typically from `complete()` calls). If batches ran during this
+            # client's lifetime, reuse the most recent batch's job identifiers
+            # so the client_close entry is associable with the same run;
+            # otherwise mint a synthetic id from the project name.
+            job_id = self._last_job_id or f"{self.project}_session"
+            job_name = self._last_job_name or self.project
+            duration = time.monotonic() - self._lifetime_start
+            self._cost_tracker.flush_to_ledger(
+                job_id=job_id,
+                job_name=job_name,
+                project=self.project,
+                duration_seconds=duration,
+                flush_reason="client_close",
+            )
             await self._transport.close()
         finally:
             self._logger.close()

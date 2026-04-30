@@ -536,24 +536,32 @@ The call log is always flushed after each write. Readers tailing the file see en
 
 One JSON object per line. Append-only. The ledger dataclass structurally cannot contain content.
 
+Per the ADR-004 amendment (2026-04-29 / 0.7.0), the ledger granularity is one entry per (model, flush-point) pair. A flush-point is the end of a `batch()` call (`flush_reason: "batch_end"`) or the close of the client (`flush_reason: "client_close"`). A model with zero calls since the last flush does not produce an entry. The accumulated counters reset after every flush, so each entry describes deltas since the previous flush rather than cumulative totals across the run.
+
 ```json
 {
-  "timestamp": "2026-04-24T14:23:11.412Z",
+  "timestamp": "2026-04-29T14:23:11.412Z",
+  "job_id": "my-batch_20260429T142300Z",
+  "job_name": "my-batch",
   "project": "my-project",
-  "job": "my-batch",
-  "task_id": "q_0042",
   "model": "claude-sonnet-4-5-20241022",
-  "provider": "usai",
-  "prompt_tokens": 124,
-  "completion_tokens": 512,
-  "total_tokens": 636,
-  "input_rate_per_1k": 0.003,
-  "output_rate_per_1k": 0.015,
-  "cost": 0.008052
+  "total_calls": 7,
+  "successful_calls": 7,
+  "failed_calls": 0,
+  "success_rate": 1.0,
+  "total_tokens_in": 868,
+  "total_tokens_out": 3584,
+  "estimated_cost": 0.0,
+  "duration_seconds": 12.4,
+  "flush_reason": "batch_end"
 }
 ```
 
-The ledger is durable. Entries are flushed after each write. An interrupted batch may be missing its last entry if the process died before flush; successful calls that completed before interruption are safe.
+A multi-rater batch produces one entry per model with nonzero calls, all sharing the same `job_id`, `job_name`, `timestamp`, `duration_seconds`, and `flush_reason`. A `complete()`-only session produces entries at `client_close` rather than `batch_end`; mixed `complete()`/`batch()` sessions produce one entry per model per flush, with `complete()` calls before a batch flushed at that batch's end.
+
+The ledger is an estimation tool, not a billing-reconciliation artifact. Rates baked into each entry reflect the catalog values active at flush time; rate changes after a flush do not retroactively update historical entries. Consumers needing exact cost reconciliation should join against an external billing record.
+
+The ledger is durable. Entries are flushed after each write. An interrupted run may be missing the lines that would have been written at the next flush-point; successful calls that completed before the previous flush are safe.
 
 ### 5.3 Post-run report format
 

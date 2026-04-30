@@ -6,6 +6,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Breaking
+- `cost_ledger.jsonl` schema changes from one-entry-per-call to one-entry-per-(model, flush-point) pair. Each entry now reflects the *actual* model whose calls it summarizes (not the project default) and adds a `flush_reason` field with the literal values `"batch_end"` or `"client_close"`. Old ledger files remain readable as JSONL — entries from prior versions just won't have `flush_reason` and may attribute multi-model batches to the default model. Downstream tooling that depended on the old shape needs updating. (ADR-004 amendment, 2026-04-29)
+- `CostTracker.__init__` signature changes: takes `pool: list[ModelConfig]` instead of `(model_name, cost_per_1k_input, cost_per_1k_output)`. `record_call` requires the model name as its first positional argument. `write_summary` is replaced by `flush_to_ledger(job_id, job_name, project, duration_seconds, flush_reason)`. `get_run_totals()` now returns a dict keyed by model name. Internal API; downstream consumers usually go through `USAiClient` and are unaffected.
+- SRS FR-032 (retroactive cost computation) removed. The ledger is an estimation tool, not a billing-reconciliation artifact. Rates baked into each entry reflect the catalog values active at flush time and do not update retroactively.
+
+### Fixed
+- Multi-model pools now produce one ledger entry per model with rates derived from each model's catalog entry. Pre-0.7.0 behavior: a single entry per batch attributing all tokens to the project default's rates regardless of which models actually ran.
+- `complete()`-only workflows now produce ledger entries (flushed at `client.close()`). Pre-0.7.0 behavior: silent — accumulated tokens were discarded when the client closed.
+
 ## [0.6.1] - 2026-04-29
 
 ### Added

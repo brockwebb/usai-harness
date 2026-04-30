@@ -35,3 +35,15 @@ Retroactive cost computation is possible. Rates live in `models.yaml`. Ledger en
 Debug logging remains available when needed but requires intentional opt-in per job. Content logs, when enabled, go to the regular call log, not the cost ledger.
 
 Downstream workload evaluation can cite ledger and call-log artifacts as reproducibility evidence without requiring privacy review of those artifacts, because the defaults contain no user or respondent content.
+
+## Amendment, 2026-04-29 — per-model granularity, retroactive cost computation removed
+
+Two coupled defects in the original implementation surfaced during a multi-rater pool run on 2026-04-29: `LedgerEntry.model` always recorded the project default, regardless of which models actually ran (so a 10-task batch with two models produced one ledger line attributing all tokens to the default's rates), and `complete()`-only workflows produced no ledger entries at all (the flush path was wired only into `batch()`). Both bugs were structural, not bookkeeping mistakes — the data model was single-model and the flush plumbing was batch-only.
+
+The ledger granularity changes from one-entry-per-call to one-entry-per-(model, flush-point) pair. A flush-point is the end of a `batch()` call or the close of the client. `CostTracker` is now keyed by model name internally and resets each model's totals after every flush, so entries describe deltas since the previous flush rather than cumulative totals. `LedgerEntry` gains a `flush_reason` field with the literal values `"batch_end"` or `"client_close"`. A model with zero calls since the last flush does not produce an entry.
+
+Retroactive cost computation (FR-032 in earlier SRS revisions) is removed as a goal. The ledger is an estimation tool, not a billing-reconciliation artifact. Rates baked into each entry reflect the catalog values active at flush time. If rates change later, historical entries do not update; downstream consumers that need exact cost reconciliation should join against an external billing record. FR-032 is deleted from the SRS as part of this change. FR-030 and FR-031 are rewritten to describe per-(model, flush-point) granularity.
+
+The call log is unchanged. It remains per-call. The two subsystems are deliberately at different granularities: the call log answers "what happened on every call" (which is what debugging and per-call cost reconciliation need), and the ledger answers "what did this run cost" (which is what reporting and budget tracking need). The ledger's coarser granularity is a feature.
+
+*Source:* CC task 2026-04-29_per_model_cost_ledger.
