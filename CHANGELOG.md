@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-04-30
+
 ### Breaking
 - `cost_ledger.jsonl` schema changes from one-entry-per-call to one-entry-per-(model, flush-point) pair. Each entry now reflects the *actual* model whose calls it summarizes (not the project default) and adds a `flush_reason` field with the literal values `"batch_end"` or `"client_close"`. Old ledger files remain readable as JSONL — entries from prior versions just won't have `flush_reason` and may attribute multi-model batches to the default model. Downstream tooling that depended on the old shape needs updating. (ADR-004 amendment, 2026-04-29)
 - `CostTracker.__init__` signature changes: takes `pool: list[ModelConfig]` instead of `(model_name, cost_per_1k_input, cost_per_1k_output)`. `record_call` requires the model name as its first positional argument. `write_summary` is replaced by `flush_to_ledger(job_id, job_name, project, duration_seconds, flush_reason)`. `get_run_totals()` now returns a dict keyed by model name. Internal API; downstream consumers usually go through `USAiClient` and are unaffected.
@@ -135,7 +137,8 @@ First release. Pip-installable Python client library for rate-limited, model-agn
 - Non-HTTPS endpoints emit a TLS warning on first request.
 - `model_requested` vs `model_returned` surfaces silent model substitution by the endpoint.
 
-[Unreleased]: ../../compare/0.6.1...HEAD
+[Unreleased]: ../../compare/0.7.0...HEAD
+[0.7.0]: ../../compare/0.6.1...0.7.0
 [0.6.1]: ../../compare/0.6.0...0.6.1
 [0.6.0]: ../../compare/0.3.0...0.6.0
 [0.3.0]: ../../compare/0.2.0...0.3.0
