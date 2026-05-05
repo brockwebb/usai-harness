@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-05
+
 ### Added
 - Auto-detect stale credentials. On a 401/403 from the endpoint in an interactive session, `USAiClient.batch()` and `USAiClient.complete()` now prompt for a fresh key (masked input), persist it to the user-level `.env`, and resume the workload from the failing task. CI and other non-TTY contexts retain the original halt-and-raise behavior. Recovery fires at most once per workload; a second consecutive auth failure re-raises the original `AuthHaltError`. Dotenv-only — Azure Key Vault rotation happens in the vault. (ADR-016)
 - `usai-harness set-key [--provider NAME]` — proactive credential rotation. Prompts for a new key (masked), upserts it into the user-level `.env` under the provider's `api_key_env`, and optionally tests it against the provider's `/models` endpoint. Default `--provider` is `usai`. The key is never logged or echoed. (ADR-016)
@@ -141,7 +143,8 @@ First release. Pip-installable Python client library for rate-limited, model-agn
 - Non-HTTPS endpoints emit a TLS warning on first request.
 - `model_requested` vs `model_returned` surfaces silent model substitution by the endpoint.
 
-[Unreleased]: ../../compare/0.7.0...HEAD
+[Unreleased]: ../../compare/0.7.1...HEAD
+[0.7.1]: ../../compare/0.7.0...0.7.1
 [0.7.0]: ../../compare/0.6.1...0.7.0
 [0.6.1]: ../../compare/0.6.0...0.6.1
 [0.6.0]: ../../compare/0.3.0...0.6.0
