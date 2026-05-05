@@ -5,6 +5,7 @@ Subcommands:
     cost-report      — aggregate entries from cost_ledger.jsonl
     init             — first-run setup: credentials and model catalog
     add-provider     — register an additional provider
+    set-key          — rotate the credential for a provider (ADR-016)
     discover-models  — refresh the live model catalog
     list-models      — print the merged model catalog (repo + user-level)
     families         — print the family catalog (parameter-acceptance rules)
@@ -19,6 +20,7 @@ import argparse
 import sys
 
 from usai_harness.audit_command import handle_audit
+from usai_harness.auth_recovery import handle_set_key
 from usai_harness.report import cost_report, format_report, generate_report
 from usai_harness.setup_commands import (
     handle_add_provider,
@@ -96,6 +98,19 @@ def _build_parser() -> argparse.ArgumentParser:
         "add-provider", help="Register an additional provider"
     )
     ap.add_argument("name", help="Provider identifier, e.g. openrouter")
+
+    sk = subparsers.add_parser(
+        "set-key",
+        help=(
+            "Rotate the credential for a provider. Prompts for a fresh "
+            "key (masked) and persists it to the user-level .env."
+        ),
+    )
+    sk.add_argument(
+        "--provider",
+        default="usai",
+        help="Provider whose credential to rotate (default: usai).",
+    )
 
     dm = subparsers.add_parser(
         "discover-models", help="Refresh the model catalog"
@@ -210,6 +225,8 @@ def cli_main(argv: list[str] | None = None) -> int:
         )
     if args.command == "add-provider":
         return handle_add_provider(args.name)
+    if args.command == "set-key":
+        return handle_set_key(provider=args.provider)
     if args.command == "discover-models":
         return handle_discover_models(args.provider)
     if args.command == "list-models":

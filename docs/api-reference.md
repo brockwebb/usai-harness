@@ -117,17 +117,23 @@ Both models must be members of the pool declared in `usai_harness.yaml`; both mu
 
 ### 1.4 Resume after auth failure
 
-If a batch halts on authentication failure, refresh the credential (see Operations Guide Section 2), then call `batch()` again with the same `job_name`:
+When stdin is interactive (i.e. running from a terminal), `USAiClient.batch()` and `USAiClient.complete()` recover transparently from a stale credential per ADR-016. On a 401/403, the harness prompts for a fresh key (masked input), persists it to the user-level `.env`, and resumes the workload — `batch()` re-runs the failing task and any deferred tasks while keeping successful results from before the halt; `complete()` retries once with the new key. Recovery fires at most once per workload; a second consecutive auth failure re-raises the original `AuthHaltError`.
+
+In non-TTY contexts (CI, piped stdin), recovery is skipped and the original halt-and-raise behavior applies. The same is true for `AzureKeyVaultProvider`-backed projects, where rotation happens in the vault rather than in the harness.
+
+For proactive rotation (the user knows a fresh key is coming), `usai-harness set-key [--provider NAME]` updates the credential without triggering an auth halt. See section 3.3a.
+
+If you do need to handle the halt manually — for example in a non-TTY context where recovery is skipped — refresh the credential and call `batch()` again with the same `job_name`:
 
 ```python
-# First attempt: halts on auth failure after 47 tasks
+# First attempt halts on auth failure after 47 tasks (non-TTY context).
 try:
     results = await client.batch(tasks, job_name="my-batch")
-except AuthenticationError:
-    # User refreshes credential
+except AuthHaltError:
+    # User refreshes credential out-of-band, e.g. via `usai-harness set-key`.
     ...
 
-# After refresh, resume picks up at task 48
+# After refresh, the resumed call picks up where the halt left off.
 results = await client.batch(tasks, job_name="my-batch")
 ```
 
@@ -293,6 +299,20 @@ usai-harness discover-models [PROVIDER]
 - `PROVIDER` (optional): Refresh only the specified provider. If omitted, all configured providers are refreshed.
 
 Does not touch credentials. Does not modify repository-level `configs/models.yaml`. Updates user-level model catalog.
+
+### 3.3a `usai-harness set-key`
+
+Rotate the credential for a provider (ADR-016). Prompts for a fresh key with masked input, persists it to the user-level `.env` under the provider's `api_key_env` variable, and optionally tests the new key against the provider's `/models` endpoint.
+
+```
+usai-harness set-key [--provider NAME]
+```
+
+- `--provider NAME`: Provider whose credential to rotate. Default: `usai`.
+
+Exit 0: key saved (a failed connectivity test prints a stderr warning but does not block the save). Exit 1: unknown provider, empty key entered, Azure-style entry without `api_key_env`, or KeyboardInterrupt at the prompt. The key is never logged or echoed; only `"New key saved for <provider>."` plus the optional connectivity test result appears on stdout.
+
+For dotenv-backed providers only. Azure Key Vault rotation happens in the vault, not in the harness; `set-key` against a Key Vault entry exits 1 with a message pointing at the vault.
 
 ### 3.4 `usai-harness list-models`
 

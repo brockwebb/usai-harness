@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- Auto-detect stale credentials. On a 401/403 from the endpoint in an interactive session, `USAiClient.batch()` and `USAiClient.complete()` now prompt for a fresh key (masked input), persist it to the user-level `.env`, and resume the workload from the failing task. CI and other non-TTY contexts retain the original halt-and-raise behavior. Recovery fires at most once per workload; a second consecutive auth failure re-raises the original `AuthHaltError`. Dotenv-only — Azure Key Vault rotation happens in the vault. (ADR-016)
+- `usai-harness set-key [--provider NAME]` — proactive credential rotation. Prompts for a new key (masked), upserts it into the user-level `.env` under the provider's `api_key_env`, and optionally tests it against the provider's `/models` endpoint. Default `--provider` is `usai`. The key is never logged or echoed. (ADR-016)
+
 ## [0.7.0] - 2026-04-30
 
 ### Breaking

@@ -327,6 +327,16 @@ The harness shall provide a CLI subcommand `usai-harness validate-config <path>`
 The `project-init` template shall produce YAML that validates clean against the project-config schema. The bootstrap layout shall not include the `project:`, `ledger_path:`, or `log_dir:` fields at the top level.
 *Source:* ADR-015.
 
+### 4.17 Credential Rotation
+
+**FR-064: Auto-recovery on stale credential.**
+On a 401 or 403 from the endpoint during a `batch()` or `complete()` call, when stdin is interactive and the project uses the DotEnv credential backend, the harness shall prompt for a fresh credential, persist it to the user-level credential store, and retry the failing task. Tasks that succeeded before the auth halt shall not be re-run; only the failing task and any deferred tasks shall be retried. On a second consecutive auth failure during the same workload, the harness shall halt without re-prompting and surface the original `AuthHaltError`. In non-TTY (CI) contexts, recovery is skipped and the original halt-and-raise behavior applies.
+*Source:* ADR-016.
+
+**FR-065: set-key CLI subcommand.**
+The CLI shall provide a `set-key [--provider NAME]` subcommand that prompts for a credential (masked input) and persists it to the user-level `.env` under the named provider's `api_key_env` variable. The subcommand shall validate that the provider exists in the user-level catalog and shall optionally test the new credential against the provider's `/models` endpoint. A failed connectivity test shall not block the save (exit code 0 with a stderr warning); an unknown provider, an empty key, or an Azure-style provider entry without `api_key_env` shall exit 1 without writing.
+*Source:* ADR-016.
+
 ## 5. Security Requirements
 
 **SEC-001: Secret redaction.**

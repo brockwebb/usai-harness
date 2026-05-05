@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from usai_harness.auth_recovery import recover_stale_credential
 from usai_harness.config import ConfigLoader, ProjectConfig
 from usai_harness.cost import CostTracker
 from usai_harness.key_manager import CredentialProvider, make_credential_provider
@@ -37,7 +38,7 @@ from usai_harness.rate_limiter import RateLimiter
 from usai_harness.redaction import redact_secrets
 from usai_harness.report import format_report, generate_report
 from usai_harness.transport import BaseTransport, get_transport
-from usai_harness.worker_pool import Task, TaskResult, WorkerPool
+from usai_harness.worker_pool import AuthHaltError, Task, TaskResult, WorkerPool
 
 log = logging.getLogger("usai_harness.client")
 
@@ -178,6 +179,7 @@ class USAiClient:
         body: dict = {}
         status: int = 0
         latency_ms: float = 0.0
+        recovery_attempted = False
 
         for attempt in range(MAX_COMPLETE_RETRIES):
             await self._rate_limiter.acquire()
@@ -214,6 +216,16 @@ class USAiClient:
                     success=True, messages=messages, log_content=log_content,
                 )
                 return body
+
+            if status in (401, 403) and not recovery_attempted:
+                recovered = self._try_recover_credential()
+                if recovered:
+                    recovery_attempted = True
+                    print(
+                        f"  Resuming workload from task {task_id}.",
+                        file=sys.stderr,
+                    )
+                    continue
 
             if status == 429:
                 self._rate_limiter.record_429()
@@ -270,7 +282,27 @@ class USAiClient:
         )
 
         start = time.monotonic()
-        results = await pool.run_batch(task_objs)
+        try:
+            results = await pool.run_batch(task_objs)
+        except AuthHaltError as e:
+            partial = pool.results
+            recovered = self._try_recover_credential()
+            if not recovered:
+                raise
+            successful_ids = {r.task_id for r in partial if r.success}
+            remaining = [t for t in task_objs if t.task_id not in successful_ids]
+            print(
+                f"  Resuming workload from task {e.task_id}. "
+                f"{len(successful_ids)} task(s) already succeeded; "
+                f"{len(remaining)} remaining.",
+                file=sys.stderr,
+            )
+            retry_results = await pool.run_batch(remaining)
+            successful_partial = [r for r in partial if r.success]
+            results = sorted(
+                successful_partial + retry_results,
+                key=lambda r: r.task_id,
+            )
         duration = time.monotonic() - start
 
         for r in results:
@@ -448,6 +480,38 @@ class USAiClient:
         if cwd_default.exists():
             return cwd_default
         return None
+
+    # ---- credential recovery (ADR-016) -----------------------------------
+
+    def _try_recover_credential(self) -> bool:
+        """Prompt for a fresh key on auth halt; persist and refresh.
+
+        Returns True iff a new key was written and the in-process api_key
+        cache was refreshed. Returns False when stdin is not interactive,
+        the user aborted at the prompt, or the project is not using the
+        DotEnv credential backend (Azure Key Vault rotation happens in
+        the vault, not in the harness).
+
+        The just-typed key is used directly for the in-process cache
+        rather than re-resolving through the credential provider. The
+        provider's layering (project-local .env beats user-level beats
+        os.environ) could otherwise let a stale project-local entry
+        shadow the rotation; the recovery prompt's intent is "use this
+        key now," so this method honours that.
+        """
+        if self.config.credentials_backend != "dotenv":
+            return False
+        api_key_env = self._provider_config.api_key_env
+        if not api_key_env:
+            return False
+        new_key = recover_stale_credential(
+            provider=self.config.provider,
+            api_key_env=api_key_env,
+        )
+        if new_key is None:
+            return False
+        self._api_key = new_key
+        return True
 
     # ---- lifecycle --------------------------------------------------------
 
