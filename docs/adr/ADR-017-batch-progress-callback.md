@@ -76,3 +76,25 @@ The worker pool gains one new emission call site (immediately after `_results.ap
 The implementation surface is small: one new module (`progress.py`) holding the `ProgressEvent` dataclass and the `_ProgressTracker` helper, one threaded kwarg through `WorkerPool.run_batch`, one new keyword on `USAiClient.batch()`. The hard-deps list is unchanged.
 
 The change is purely additive. No `### Breaking` section in CHANGELOG.
+
+## Amendment, 2026-05-06 — built-in text formatter, default flipped to visible
+
+The 0.8.0 design left the default at `progress=None`, on the reasoning that the harness should not pick a default rendering for the caller. The first downstream adoption (federal-survey-concept-mapper Stage 1) immediately reproduced the original failure mode: nobody bothered to wire a callback, runs went silent for ~30 minutes, the user kept asking "is it stalled?" The design decision was right in the abstract and wrong in practice — the caller does not, in the moment, want to write a callback; they want progress to just appear.
+
+0.8.1 ships a built-in `text_progress` formatter inside `progress.py` (alongside the existing `ProgressEvent` and `_ProgressTracker`) and makes it the default value of `USAiClient.batch(progress=...)`. The output format is opinionated and simple:
+
+```
+[HH:MM:SS] [<job_name>] <completed>/<total> (<pct>%)  elapsed <elapsed>  eta <eta>
+```
+
+Failed events append `  FAIL: <task_id>`. The `[<job_name>]` label is omitted when `job_name` is empty. Time durations are rendered as `Ns`, `Nm SSs`, or `Nh MMm SSs` depending on magnitude. Output goes to stdout with `flush=True` so a long-running batch produces visible progress immediately rather than buffering.
+
+Callers who want pre-0.8.1 silence pass `progress=None`. Callers who want a different format pass their own callable. The 0.8.0 plumbing (`ProgressEvent`, `_ProgressTracker`, `WorkerPool.run_batch(tracker=...)`) is unchanged.
+
+Backward compatibility note: a caller running 0.8.0 code that did not pass `progress=` got no output. Under 0.8.1 the same code now writes status lines to stdout. This is a behavioral change but not a breaking one — no return values change, no exceptions change, no data changes. The only difference is stdout. Callers that pipe stdout through a parser will need to opt out with `progress=None`. The harness convention remains "library, not service": stdout is for humans, not machines, and machine-readable progress remains available through a custom JSON-emitting callback.
+
+The default flip aligns the project convention "silent failures are bugs" with the practical default: a 30-minute batch with zero output was, by that principle, a bug. Making progress the default fixes it at the root.
+
+The "stderr progress bar" alternative rejected in 0.8.0 remains rejected; `text_progress` is plain `print(...)`, not a bar (no `\r` rewrites, no terminal-control sequences, no curses, no tqdm). One line per terminal-state task. That's the entire surface.
+
+*Source:* CC task 2026-05-06_builtin_text_progress.

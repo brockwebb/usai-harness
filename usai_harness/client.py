@@ -34,7 +34,7 @@ from usai_harness.config import ConfigLoader, ProjectConfig
 from usai_harness.cost import CostTracker
 from usai_harness.key_manager import CredentialProvider, make_credential_provider
 from usai_harness.logger import CallLogger
-from usai_harness.progress import ProgressEvent, _ProgressTracker
+from usai_harness.progress import ProgressEvent, _ProgressTracker, text_progress
 from usai_harness.rate_limiter import RateLimiter
 from usai_harness.redaction import redact_secrets
 from usai_harness.report import format_report, generate_report
@@ -252,7 +252,7 @@ class USAiClient:
         tasks: list[dict],
         job_name: Optional[str] = None,
         log_content: bool = False,
-        progress: Optional[Callable[[ProgressEvent], None]] = None,
+        progress: Optional[Callable[[ProgressEvent], None]] = text_progress,
     ) -> list[TaskResult]:
         """Process a list of task dicts through the worker pool.
 

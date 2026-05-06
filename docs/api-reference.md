@@ -117,13 +117,25 @@ Both models must be members of the pool declared in `usai_harness.yaml`; both mu
 
 ### 1.3a Progress callbacks
 
-Per ADR-017, `batch()` accepts an optional `progress` keyword argument. The callback fires once per task as each task reaches a terminal state, in *completion order* (which is not submission order under concurrent workers). When `progress=None` (the default), behavior is unchanged.
+Per ADR-017, `batch()` accepts an optional `progress` keyword argument. The callback fires once per task as each task reaches a terminal state, in *completion order* (which is not submission order under concurrent workers).
+
+As of 0.8.1 (ADR-017 amendment), the default value of `progress` is the built-in `text_progress` formatter — a long-running batch produces visible status lines without any caller wiring. Pass `progress=None` for pre-0.8.1 silent behavior, or pass a custom callable for any other shape of output.
 
 ```python
-from usai_harness import ProgressEvent, USAiClient
+from usai_harness import ProgressEvent, USAiClient, text_progress
 
+# Default: built-in text_progress writes one timestamped status line per task.
 async with USAiClient(project="my-project") as client:
-    results = await client.batch(tasks, progress=lambda e: print(f"{e.completed}/{e.total}"))
+    results = await client.batch(tasks, job_name="stage1")
+# [14:23:01] [stage1] 1/699 (0.1%)  elapsed 3s  eta 34m 57s
+# [14:23:04] [stage1] 2/699 (0.3%)  elapsed 6s  eta 34m 51s
+# ...
+
+# Silent: pre-0.8.1 behavior.
+results = await client.batch(tasks, progress=None)
+
+# Custom: any callable matching `Callable[[ProgressEvent], None]`.
+results = await client.batch(tasks, progress=lambda e: print(f"{e.completed}/{e.total}"))
 ```
 
 The `ProgressEvent` dataclass is frozen and has the following fields:

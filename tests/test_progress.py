@@ -1,17 +1,18 @@
-"""Tests for the `batch()` progress callback (ADR-017 / FR-066)."""
+"""Tests for the `batch()` progress callback (ADR-017 / FR-066) and the
+built-in `text_progress` formatter (ADR-017 amendment 2026-05-06 / 0.8.1)."""
 
 import asyncio
 import logging
+import re
 import time
 
 import pytest
 
-from usai_harness import ProgressEvent
+from usai_harness import ProgressEvent, text_progress
 from usai_harness.client import USAiClient
+from usai_harness.progress import _fmt_time
 from usai_harness.transport import BaseTransport
 from usai_harness.worker_pool import AuthHaltError
-
-pytestmark = pytest.mark.asyncio
 
 
 def _ok_response(model: str = "claude-sonnet-4-5-20241022") -> dict:
@@ -90,6 +91,7 @@ def _tasks(n: int) -> list[dict]:
     ]
 
 
+@pytest.mark.asyncio
 async def test_callback_fires_exactly_n_times(tmp_path, env_path, capsys):
     events: list[ProgressEvent] = []
     client = _client(tmp_path, env_path, _OKTransport())
@@ -106,6 +108,7 @@ async def test_callback_fires_exactly_n_times(tmp_path, env_path, capsys):
     assert len(events) == 5
 
 
+@pytest.mark.asyncio
 async def test_counters_are_monotonic(tmp_path, env_path, capsys):
     events: list[ProgressEvent] = []
     client = _client(tmp_path, env_path, _OKTransport())
@@ -132,6 +135,7 @@ async def test_counters_are_monotonic(tmp_path, env_path, capsys):
     )
 
 
+@pytest.mark.asyncio
 async def test_final_event_has_completed_equals_total(tmp_path, env_path, capsys):
     events: list[ProgressEvent] = []
     client = _client(tmp_path, env_path, _OKTransport())
@@ -146,6 +150,7 @@ async def test_final_event_has_completed_equals_total(tmp_path, env_path, capsys
     assert all(e.job_name == "finals" for e in events)
 
 
+@pytest.mark.asyncio
 async def test_succeeded_failed_partition_under_failures(tmp_path, env_path, capsys):
     events: list[ProgressEvent] = []
     transport = _FlakyTransport(fail_payload_substrings=["q1", "q3"])
@@ -162,6 +167,7 @@ async def test_succeeded_failed_partition_under_failures(tmp_path, env_path, cap
     assert final.failed == 2
 
 
+@pytest.mark.asyncio
 async def test_callback_exception_does_not_affect_results(
     tmp_path, env_path, caplog, capsys,
 ):
@@ -192,6 +198,7 @@ async def test_callback_exception_does_not_affect_results(
     )
 
 
+@pytest.mark.asyncio
 async def test_slow_callback_completes_workload(tmp_path, env_path, capsys):
     """A callback that does bounded synchronous work must not deadlock or
     drop events. Throughput will be slower (the callback runs inline on
@@ -217,27 +224,41 @@ async def test_slow_callback_completes_workload(tmp_path, env_path, capsys):
     assert events[-1].completed == 10
 
 
-async def test_progress_none_is_byte_identical(tmp_path, env_path, capsys):
-    """Default `progress=None` behavior is unchanged: same results, no callback."""
-    client_a = _client(tmp_path, env_path, _OKTransport())
+@pytest.mark.asyncio
+async def test_progress_none_silences_output(tmp_path, env_path, capsys):
+    """`progress=None` produces no stdout from the harness's default text
+    formatter. Result list is unaffected."""
+    client = _client(tmp_path, env_path, _OKTransport())
     try:
-        results_a = await client_a.batch(_tasks(3), job_name="b")
+        results = await client.batch(_tasks(3), job_name="silent", progress=None)
     finally:
-        await client_a.close()
-    capsys.readouterr()
+        await client.close()
 
-    client_b = _client(tmp_path, env_path, _OKTransport())
+    captured = capsys.readouterr().out
+    # No status lines from text_progress.
+    assert "silent" not in captured
+    assert "elapsed" not in captured
+    assert len(results) == 3
+
+
+@pytest.mark.asyncio
+async def test_progress_default_is_text_progress(tmp_path, env_path, capsys):
+    """Default `batch()` (no progress kwarg) uses `text_progress` per
+    ADR-017 amendment (0.8.1). Status lines appear on stdout."""
+    client = _client(tmp_path, env_path, _OKTransport())
     try:
-        results_b = await client_b.batch(_tasks(3), job_name="b", progress=None)
+        results = await client.batch(_tasks(3), job_name="visible")
     finally:
-        await client_b.close()
-    capsys.readouterr()
+        await client.close()
 
-    # Result lists have the same shape (task ids and success flags).
-    assert [r.task_id for r in results_a] == [r.task_id for r in results_b]
-    assert [r.success for r in results_a] == [r.success for r in results_b]
+    out = capsys.readouterr().out
+    assert "[visible]" in out
+    assert "1/3" in out and "2/3" in out and "3/3" in out
+    assert "elapsed" in out and "eta" in out
+    assert len(results) == 3
 
 
+@pytest.mark.asyncio
 async def test_event_fields_populated(tmp_path, env_path, capsys):
     events: list[ProgressEvent] = []
     client = _client(tmp_path, env_path, _OKTransport())
@@ -284,6 +305,7 @@ class _AuthFlipBatchTransport(BaseTransport):
         self.closed = True
 
 
+@pytest.mark.asyncio
 async def test_recovery_emits_one_event_per_task_not_per_retry(
     tmp_path, env_path, monkeypatch, capsys,
 ):
@@ -311,3 +333,89 @@ async def test_recovery_emits_one_event_per_task_not_per_retry(
     assert events[-1].total == 5
     # Counters monotonic across the recovery boundary.
     assert [e.completed for e in events] == [1, 2, 3, 4, 5]
+
+
+# ---------- text_progress (ADR-017 amendment 2026-05-06 / 0.8.1) ----------
+
+
+def _event(
+    *,
+    completed: int = 1,
+    total: int = 5,
+    succeeded: int = 1,
+    failed: int = 0,
+    success: bool = True,
+    job_name: str = "stage1",
+    task_id: str = "t0001",
+    elapsed_seconds: float = 3.0,
+) -> ProgressEvent:
+    return ProgressEvent(
+        job_name=job_name,
+        task_id=task_id,
+        completed=completed,
+        total=total,
+        succeeded=succeeded,
+        failed=failed,
+        success=success,
+        status_code=200 if success else 500,
+        latency_ms=120.0,
+        elapsed_seconds=elapsed_seconds,
+    )
+
+
+def test_fmt_time_seconds():
+    assert _fmt_time(0) == "0s"
+    assert _fmt_time(7.4) == "7s"
+    assert _fmt_time(59) == "59s"
+
+
+def test_fmt_time_minutes():
+    assert _fmt_time(60) == "1m 00s"
+    assert _fmt_time(125) == "2m 05s"
+    assert _fmt_time(3599) == "59m 59s"
+
+
+def test_fmt_time_hours():
+    assert _fmt_time(3600) == "1h 00m 00s"
+    assert _fmt_time(3725) == "1h 02m 05s"
+
+
+def test_fmt_time_negative_clamps_to_zero():
+    assert _fmt_time(-1.0) == "0s"
+
+
+def test_text_progress_writes_status_line(capsys):
+    text_progress(_event(completed=3, total=10, succeeded=3, elapsed_seconds=9.0))
+    out = capsys.readouterr().out
+    # Timestamp prefix matches HH:MM:SS.
+    assert re.match(r"\[\d{2}:\d{2}:\d{2}\] ", out)
+    assert "[stage1]" in out
+    assert "3/10" in out
+    assert "(30.0%)" in out
+    assert "elapsed 9s" in out
+    # eta = 9 / 3 * 7 = 21s.
+    assert "eta 21s" in out
+
+
+def test_text_progress_omits_label_when_job_name_empty(capsys):
+    text_progress(_event(job_name=""))
+    out = capsys.readouterr().out
+    # No "[<label>]" between the timestamp bracket and the count.
+    # The line opens with `[HH:MM:SS] 1/5` rather than `[HH:MM:SS] [..] 1/5`.
+    assert re.search(r"\] 1/5 ", out)
+
+
+def test_text_progress_appends_fail_on_failure(capsys):
+    text_progress(
+        _event(success=False, task_id="stage1_rater_a_b0042", failed=1, succeeded=0),
+    )
+    out = capsys.readouterr().out
+    assert "FAIL: stage1_rater_a_b0042" in out
+
+
+def test_text_progress_zero_total_does_not_divide_by_zero(capsys):
+    """Defensive: guards against an empty-batch edge case at the formatter."""
+    text_progress(_event(completed=0, total=0, succeeded=0, elapsed_seconds=0.0))
+    out = capsys.readouterr().out
+    assert "0/0" in out
+    assert "(0.0%)" in out

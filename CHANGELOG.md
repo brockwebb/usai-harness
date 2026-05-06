@@ -6,6 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- New built-in text formatter `text_progress` exported from `usai_harness`. Renders one timestamped status line per terminal-state task (`[HH:MM:SS] [<job_name>] <completed>/<total> (<pct>%)  elapsed <elapsed>  eta <eta>`); failed events append `FAIL: <task_id>`. Plain `print(..., flush=True)` — no progress bar, no terminal-control sequences, no new dependencies. (ADR-017 amendment)
+
+### Changed
+- The default value of `USAiClient.batch(progress=...)` is now `text_progress` rather than `None`. Existing callers that did not pass a `progress` argument will see status lines on stdout where 0.8.0 was silent. Pass `progress=None` for the pre-0.8.1 silent behavior, or a custom `Callable[[ProgressEvent], None]` for any other rendering. This is a behavioral change, not a breaking one — return values, exceptions, and data are unchanged; only stdout differs. (ADR-017 amendment, 2026-05-06)
+
 ## [0.8.0] - 2026-05-06
 
 ### Added

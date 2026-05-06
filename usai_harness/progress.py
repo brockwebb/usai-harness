@@ -12,11 +12,18 @@ The harness is a library, not a service. The callback runs inline on the
 asyncio event loop. A buggy callback is wrapped in `try/except`; any
 exception it raises is logged at WARN level and suppressed so the
 workload itself cannot be poisoned by caller-side bugs.
+
+Per the ADR-017 amendment (2026-05-06 / 0.8.1), this module also exports
+`text_progress`, a ready-to-use formatter that callers do not have to
+write themselves. `text_progress` is the default value of
+`USAiClient.batch(progress=...)`, which flips the default from "silent"
+to "visible." Callers who want pre-0.8.1 silence pass `progress=None`.
 """
 
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable, Optional
 
 log = logging.getLogger("usai_harness.progress")
@@ -115,3 +122,53 @@ class _ProgressTracker:
                 "is not affected).",
                 type(e).__name__, e,
             )
+
+
+def _fmt_time(seconds: float) -> str:
+    """Render a non-negative duration as `Ns`, `Nm SSs`, or `Nh MMm SSs`.
+
+    Negative inputs (which can occur if `elapsed_seconds` is briefly
+    smaller than the previous tick due to clock skew) clamp to 0.
+    """
+    s = int(seconds) if seconds > 0 else 0
+    if s < 60:
+        return f"{s}s"
+    if s < 3600:
+        return f"{s // 60}m {s % 60:02d}s"
+    return f"{s // 3600}h {(s % 3600) // 60:02d}m {s % 60:02d}s"
+
+
+def text_progress(event: ProgressEvent) -> None:
+    """Built-in text formatter for `batch(progress=...)` (ADR-017 amendment).
+
+    Default callback as of 0.8.1: every line carries a local-clock
+    timestamp, an optional `[job_name]` label, the `completed/total`
+    fraction with one-decimal-place percent, the elapsed wall time, and
+    an ETA derived from `elapsed_seconds / completed * (total - completed)`.
+    Failed events append `FAIL: <task_id>`. Output goes to stdout with
+    `flush=True` so a long-running batch produces visible progress
+    immediately rather than buffering.
+
+    Callers who want a different format pass their own
+    `Callable[[ProgressEvent], None]`. Callers who want silence pass
+    `progress=None`.
+    """
+    timestamp = datetime.now().strftime("%H:%M:%S")
+    label = f" [{event.job_name}]" if event.job_name else ""
+    pct = (event.completed / event.total * 100.0) if event.total else 0.0
+    elapsed = _fmt_time(event.elapsed_seconds)
+    if event.completed > 0:
+        eta_seconds = (
+            event.elapsed_seconds / event.completed
+            * (event.total - event.completed)
+        )
+    else:
+        eta_seconds = 0.0
+    eta = _fmt_time(eta_seconds)
+    line = (
+        f"[{timestamp}]{label} {event.completed}/{event.total} ({pct:.1f}%)  "
+        f"elapsed {elapsed}  eta {eta}"
+    )
+    if not event.success:
+        line += f"  FAIL: {event.task_id}"
+    print(line, flush=True)
