@@ -115,6 +115,102 @@ async with USAiClient(project="rater-ensemble") as client:
 
 Both models must be members of the pool declared in `usai_harness.yaml`; both must share the same provider (cross-provider pools are rejected).
 
+### 1.3a Progress callbacks
+
+Per ADR-017, `batch()` accepts an optional `progress` keyword argument. The callback fires once per task as each task reaches a terminal state, in *completion order* (which is not submission order under concurrent workers). When `progress=None` (the default), behavior is unchanged.
+
+```python
+from usai_harness import ProgressEvent, USAiClient
+
+async with USAiClient(project="my-project") as client:
+    results = await client.batch(tasks, progress=lambda e: print(f"{e.completed}/{e.total}"))
+```
+
+The `ProgressEvent` dataclass is frozen and has the following fields:
+
+```python
+@dataclass(frozen=True)
+class ProgressEvent:
+    job_name: str               # the batch's job_name, or "" if unset
+    task_id: str                # the completed task's id
+    completed: int              # tasks at terminal state, including this one
+    total: int                  # len(tasks) at submission time
+    succeeded: int              # subset of completed that succeeded
+    failed: int                 # subset of completed that did not succeed
+    success: bool               # this task's outcome
+    status_code: Optional[int]  # this task's HTTP status, or None on transport error
+    latency_ms: float           # this task's wall-time latency
+    elapsed_seconds: float      # wall time since batch() was called
+```
+
+Counters are monotonically non-decreasing. `completed` strictly increases by 1 per event. `succeeded + failed == completed` is invariant. The final event of a successful workload has `completed == total`.
+
+Exceptions raised by the callback are logged at WARN level and suppressed; they do not affect the workload. A buggy callback cannot poison the run.
+
+**Example: text status loop with ETA.**
+
+```python
+import time
+
+def progress(event):
+    pct = event.completed / event.total * 100
+    if event.completed > 0:
+        eta_sec = event.elapsed_seconds / event.completed * (event.total - event.completed)
+    else:
+        eta_sec = 0.0
+    if eta_sec >= 3600:
+        eta = f"{eta_sec / 3600:.1f}h"
+    elif eta_sec >= 60:
+        eta = f"{eta_sec / 60:.1f}m"
+    else:
+        eta = f"{eta_sec:.0f}s"
+    print(
+        f"\r[{event.completed:>4}/{event.total}] {pct:5.1f}% | "
+        f"ok={event.succeeded} fail={event.failed} | "
+        f"eta {eta}",
+        end="", flush=True,
+    )
+    if event.completed == event.total:
+        print()  # newline after the final event
+
+results = await client.batch(tasks, progress=progress)
+```
+
+**Example: structured logging.**
+
+```python
+import json
+import sys
+
+def progress(event):
+    sys.stderr.write(json.dumps({
+        "job": event.job_name,
+        "task_id": event.task_id,
+        "completed": event.completed,
+        "total": event.total,
+        "succeeded": event.succeeded,
+        "failed": event.failed,
+        "success": event.success,
+        "status_code": event.status_code,
+        "latency_ms": event.latency_ms,
+        "elapsed_seconds": event.elapsed_seconds,
+    }) + "\n")
+
+await client.batch(tasks, progress=progress)
+# Pipe stderr through `jq -c` or a log aggregator for downstream processing.
+```
+
+**Note on completion order.** Under concurrent workers, events arrive in completion order, not submission order. Example output for a 5-task batch with workers=3:
+
+```
+[   1/5] 20.0% | ok=1 fail=0 | eta 0s    # task t0002 completed first
+[   2/5] 40.0% | ok=2 fail=0 | eta 1s    # then t0000
+[   3/5] 60.0% | ok=3 fail=0 | eta 0s    # then t0001
+...
+```
+
+If you need submission-order output, sort the final results list by `task_id` after `batch()` returns; the callback is the wrong layer for that.
+
 ### 1.4 Resume after auth failure
 
 When stdin is interactive (i.e. running from a terminal), `USAiClient.batch()` and `USAiClient.complete()` recover transparently from a stale credential per ADR-016. On a 401/403, the harness prompts for a fresh key (masked input), persists it to the user-level `.env`, and resumes the workload — `batch()` re-runs the failing task and any deferred tasks while keeping successful results from before the halt; `complete()` retries once with the new key. Recovery fires at most once per workload; a second consecutive auth failure re-raises the original `AuthHaltError`.

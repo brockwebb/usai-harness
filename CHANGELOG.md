@@ -6,6 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Added
+- `USAiClient.batch()` accepts a `progress: Callable[[ProgressEvent], None]` keyword argument. The callback fires once per task as each task reaches a terminal state, in completion order. Counters are monotonically non-decreasing; `succeeded + failed == completed` is invariant on every event. The default behavior (`progress=None`) is byte-identical to pre-0.8.0 `batch()`. New `ProgressEvent` frozen dataclass exported from `usai_harness`. Tasks that get retried after credential recovery (FR-064) fire exactly one event when they ultimately reach a terminal state, never one per retry. (ADR-017, FR-066)
+
 ## [0.7.1] - 2026-05-05
 
 ### Added

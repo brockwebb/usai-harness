@@ -83,22 +83,36 @@ class WorkerPool:
         self._results: list[TaskResult] = []
         self._halt_event: Optional[asyncio.Event] = None
         self._halt_reason: Optional[AuthHaltError] = None
+        self._tracker = None
 
     @property
     def results(self) -> list[TaskResult]:
         """Sorted snapshot of collected results. Safe to read after a halt."""
         return sorted(self._results, key=lambda r: r.task_id)
 
-    async def run_batch(self, tasks: list[Task]) -> list[TaskResult]:
+    async def run_batch(
+        self,
+        tasks: list[Task],
+        tracker=None,
+    ) -> list[TaskResult]:
         """Process all tasks across n_workers and return deterministic results.
 
         Raises AuthHaltError (after gathering in-flight workers) if the endpoint
         returns 401 or 403. Partial results are still available via `self.results`.
+
+        Per ADR-017, an optional `tracker` (a `_ProgressTracker` instance)
+        receives one `emit` call per task that reaches a terminal state in
+        completion order. Auth-halted tasks (401/403) and tasks deferred
+        by an auth halt do not emit; they will be retried by the caller
+        after credential recovery and emit then. The same tracker instance
+        is reused across recovery retries so the per-batch counters span
+        retries.
         """
         self._queue = asyncio.Queue()
         self._results = []
         self._halt_event = asyncio.Event()
         self._halt_reason = None
+        self._tracker = tracker
 
         for task in tasks:
             await self._queue.put(task)
@@ -132,9 +146,22 @@ class WorkerPool:
                     self._results.append(self._failed(
                         item, error="auth_halt_deferred",
                     ))
+                    # Per ADR-017, deferred tasks do not emit a progress
+                    # event; they will be retried by the caller after
+                    # credential recovery and emit then.
                     continue
                 result = await self._process_task(item)
                 self._results.append(result)
+                if (
+                    self._tracker is not None
+                    and result.status_code not in (401, 403)
+                ):
+                    self._tracker.emit(
+                        task_id=result.task_id,
+                        success=result.success,
+                        status_code=result.status_code,
+                        latency_ms=result.latency_ms,
+                    )
             finally:
                 self._queue.task_done()
 

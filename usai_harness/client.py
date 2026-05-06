@@ -27,13 +27,14 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from usai_harness.auth_recovery import recover_stale_credential
 from usai_harness.config import ConfigLoader, ProjectConfig
 from usai_harness.cost import CostTracker
 from usai_harness.key_manager import CredentialProvider, make_credential_provider
 from usai_harness.logger import CallLogger
+from usai_harness.progress import ProgressEvent, _ProgressTracker
 from usai_harness.rate_limiter import RateLimiter
 from usai_harness.redaction import redact_secrets
 from usai_harness.report import format_report, generate_report
@@ -251,6 +252,7 @@ class USAiClient:
         tasks: list[dict],
         job_name: Optional[str] = None,
         log_content: bool = False,
+        progress: Optional[Callable[[ProgressEvent], None]] = None,
     ) -> list[TaskResult]:
         """Process a list of task dicts through the worker pool.
 
@@ -275,6 +277,18 @@ class USAiClient:
         job_name = job_name or self.project
         task_objs = self._build_tasks(tasks, job_name)
 
+        # Per ADR-017, progress is delivered via a single tracker instance
+        # whose counters are based on the original submission size and
+        # span any FR-064 recovery retries. Tasks that emit through
+        # `_ProgressTracker.emit` do so in completion order.
+        tracker: Optional[_ProgressTracker] = None
+        if progress is not None:
+            tracker = _ProgressTracker(
+                total=len(task_objs),
+                job_name=job_name,
+                callback=progress,
+            )
+
         pool = WorkerPool(
             rate_limiter=self._rate_limiter,
             request_fn=self._make_request,
@@ -283,7 +297,7 @@ class USAiClient:
 
         start = time.monotonic()
         try:
-            results = await pool.run_batch(task_objs)
+            results = await pool.run_batch(task_objs, tracker=tracker)
         except AuthHaltError as e:
             partial = pool.results
             recovered = self._try_recover_credential()
@@ -297,7 +311,7 @@ class USAiClient:
                 f"{len(remaining)} remaining.",
                 file=sys.stderr,
             )
-            retry_results = await pool.run_batch(remaining)
+            retry_results = await pool.run_batch(remaining, tracker=tracker)
             successful_partial = [r for r in partial if r.success]
             results = sorted(
                 successful_partial + retry_results,

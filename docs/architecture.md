@@ -37,7 +37,7 @@ The harness is a Python library imported by a calling program. It is not a servi
 
 ## 3. Component Overview
 
-The harness is organized into nine modules, each with a narrow responsibility and explicit contract. `client.py` is the integration point. All other modules are usable and testable without it.
+The harness is organized into ten modules, each with a narrow responsibility and explicit contract. `client.py` is the integration point. All other modules are usable and testable without it.
 
 ```mermaid
 flowchart TB
@@ -123,6 +123,10 @@ Accumulates per-call token counts, applies rates from the model configuration, a
 ### 3.9 `report.py` — Report
 
 Produces the post-run summary at the end of a batch. Provides the `usai-harness cost-report` and `usai-harness audit` CLI subcommands. The `ping`, `verify`, `init`, `add-provider`, and `discover-models` subcommands are also registered through this module.
+
+### 3.10 `progress.py` — Caller Observability
+
+Exposes the `ProgressEvent` dataclass (frozen, public) and the internal `_ProgressTracker` helper that owns per-batch counters. When `USAiClient.batch()` is called with a `progress` keyword argument, `client.py` instantiates a tracker and threads it into `worker_pool.run_batch`; the worker pool calls `tracker.emit` from its task-completion handler for every terminal task except auth-halted and deferred ones. The tracker wraps the user callback in `try/except` and logs at WARN on exceptions, so a buggy callback cannot poison the workload (ADR-017, FR-066). The same tracker instance spans both `run_batch` invocations in the FR-064 recovery flow, so retried tasks fire exactly one event when they ultimately reach a terminal state.
 
 ## 4. Data Flow
 

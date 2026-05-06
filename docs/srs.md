@@ -337,6 +337,12 @@ On a 401 or 403 from the endpoint during a `batch()` or `complete()` call, when 
 The CLI shall provide a `set-key [--provider NAME]` subcommand that prompts for a credential (masked input) and persists it to the user-level `.env` under the named provider's `api_key_env` variable. The subcommand shall validate that the provider exists in the user-level catalog and shall optionally test the new credential against the provider's `/models` endpoint. A failed connectivity test shall not block the save (exit code 0 with a stderr warning); an unknown provider, an empty key, or an Azure-style provider entry without `api_key_env` shall exit 1 without writing.
 *Source:* ADR-016.
 
+### 4.18 Caller Observability
+
+**FR-066: Batch progress callback.**
+The harness shall accept an optional `progress` keyword argument on `USAiClient.batch()` of type `Callable[[ProgressEvent], None]`. When provided, the harness shall invoke the callback exactly once per task as each task reaches a terminal state, in completion order. The callback shall receive a frozen `ProgressEvent` dataclass containing job identification, monotonically non-decreasing completed/succeeded/failed counters, the originating task's outcome, and elapsed seconds since the batch began. Tasks that are auth-halted or deferred during a credential-recovery cycle (FR-064) shall fire exactly one event when they ultimately reach a terminal state — never one per retry. Exceptions raised by the callback shall be logged at WARN level and suppressed; they shall not affect the workload. The default behavior with `progress=None` shall be byte-identical to pre-0.8.0 `batch()`.
+*Source:* ADR-017.
+
 ## 5. Security Requirements
 
 **SEC-001: Secret redaction.**
