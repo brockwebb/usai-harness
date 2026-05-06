@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-05-06
+
 ### Added
 - New built-in text formatter `text_progress` exported from `usai_harness`. Renders one timestamped status line per terminal-state task (`[HH:MM:SS] [<job_name>] <completed>/<total> (<pct>%)  elapsed <elapsed>  eta <eta>`); failed events append `FAIL: <task_id>`. Plain `print(..., flush=True)` — no progress bar, no terminal-control sequences, no new dependencies. (ADR-017 amendment)
 
@@ -154,7 +156,8 @@ First release. Pip-installable Python client library for rate-limited, model-agn
 - Non-HTTPS endpoints emit a TLS warning on first request.
 - `model_requested` vs `model_returned` surfaces silent model substitution by the endpoint.
 
-[Unreleased]: ../../compare/0.8.0...HEAD
+[Unreleased]: ../../compare/0.8.1...HEAD
+[0.8.1]: ../../compare/0.8.0...0.8.1
 [0.8.0]: ../../compare/0.7.1...0.8.0
 [0.7.1]: ../../compare/0.7.0...0.7.1
 [0.7.0]: ../../compare/0.6.1...0.7.0
