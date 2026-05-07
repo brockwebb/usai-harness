@@ -6,7 +6,7 @@ import time
 import pytest
 
 from usai_harness.rate_limiter import RateLimiter
-from usai_harness.worker_pool import AuthHaltError, Task, TaskResult, WorkerPool
+from usai_harness.worker_pool import AuthHaltError, Task, BatchResult, WorkerPool
 
 pytestmark = pytest.mark.asyncio
 

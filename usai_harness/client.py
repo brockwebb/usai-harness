@@ -18,7 +18,7 @@ Inputs:
 
 Outputs:
     - complete() returns response dict (OpenAI-format)
-    - batch() returns list[TaskResult] and prints a post-run report
+    - batch() returns list[BatchResult] and prints a post-run report
 """
 
 import asyncio
@@ -39,7 +39,7 @@ from usai_harness.rate_limiter import RateLimiter
 from usai_harness.redaction import redact_secrets
 from usai_harness.report import format_report, generate_report
 from usai_harness.transport import BaseTransport, get_transport
-from usai_harness.worker_pool import AuthHaltError, Task, TaskResult, WorkerPool
+from usai_harness.worker_pool import AuthHaltError, Task, BatchResult, WorkerPool
 
 log = logging.getLogger("usai_harness.client")
 
@@ -253,7 +253,7 @@ class USAiClient:
         job_name: Optional[str] = None,
         log_content: bool = False,
         progress: Optional[Callable[[ProgressEvent], None]] = text_progress,
-    ) -> list[TaskResult]:
+    ) -> list[BatchResult]:
         """Process a list of task dicts through the worker pool.
 
         Each task dict must contain `messages`. Optional: `model`, `temperature`,
@@ -442,7 +442,7 @@ class USAiClient:
 
     def _record_result(
         self,
-        result: TaskResult,
+        result: BatchResult,
         log_content: bool = False,
     ) -> None:
         model = result.payload.get("model", self.config.default_model.name)

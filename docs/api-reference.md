@@ -143,17 +143,20 @@ The `ProgressEvent` dataclass is frozen and has the following fields:
 ```python
 @dataclass(frozen=True)
 class ProgressEvent:
-    job_name: str               # the batch's job_name, or "" if unset
-    task_id: str                # the completed task's id
-    completed: int              # tasks at terminal state, including this one
-    total: int                  # len(tasks) at submission time
-    succeeded: int              # subset of completed that succeeded
-    failed: int                 # subset of completed that did not succeed
-    success: bool               # this task's outcome
-    status_code: Optional[int]  # this task's HTTP status, or None on transport error
-    latency_ms: float           # this task's wall-time latency
-    elapsed_seconds: float      # wall time since batch() was called
+    job_name: str                # the batch's job_name, or "" if unset
+    task_id: str                 # the completed task's id
+    completed: int               # tasks at terminal state, including this one
+    total: int                   # len(tasks) at submission time
+    succeeded: int               # subset of completed that succeeded
+    failed: int                  # subset of completed that did not succeed
+    success: bool                # this task's outcome
+    status_code: Optional[int]   # this task's HTTP status, or None on transport error
+    latency_ms: float            # this task's wall-time latency
+    elapsed_seconds: float       # wall time since batch() was called
+    result: Optional[BatchResult]  # full per-task result (0.9.0+); always populated for fired events
 ```
+
+The `result` field carries the same `BatchResult` that ends up in the `batch()` return list — payload, metadata, response body, status, error, latency. Callers can use it to checkpoint per task, stream JSONL, or extract response content incrementally without waiting for `batch()` to return.
 
 Counters are monotonically non-decreasing. `completed` strictly increases by 1 per event. `succeeded + failed == completed` is invariant. The final event of a successful workload has `completed == total`.
 
@@ -187,6 +190,33 @@ def progress(event):
 
 results = await client.batch(tasks, progress=progress)
 ```
+
+**Example: per-task JSONL checkpoint via `event.result`.**
+
+```python
+import json
+
+out = open("results.jsonl", "w", encoding="utf-8")
+
+def checkpoint(event):
+    r = event.result
+    if r is None:
+        return
+    out.write(json.dumps({
+        "task_id": r.task_id,
+        "success": r.success,
+        "status_code": r.status_code,
+        "latency_ms": r.latency_ms,
+        "response": r.response,        # full provider body, OpenAI-format
+        "error": r.error,
+    }) + "\n")
+    out.flush()  # safe across crashes mid-batch
+
+await client.batch(tasks, progress=checkpoint)
+out.close()
+```
+
+The callback fires at the moment each task reaches a terminal state, so `results.jsonl` is durable per task — a crash mid-batch leaves a partial but valid file. `text_progress` ignores the `result` field; if you want both progress lines and per-task persistence, compose two callbacks into one.
 
 **Example: structured logging.**
 

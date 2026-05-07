@@ -419,3 +419,115 @@ def test_text_progress_zero_total_does_not_divide_by_zero(capsys):
     out = capsys.readouterr().out
     assert "0/0" in out
     assert "(0.0%)" in out
+
+
+# ---------- ProgressEvent.result (ADR-017 amendment 2026-05-06 / 0.9.0) ----
+
+
+@pytest.mark.asyncio
+async def test_event_result_is_populated_with_batch_result(
+    tmp_path, env_path, capsys,
+):
+    """Every fired ProgressEvent carries the completed task's full
+    BatchResult — not just counters."""
+    from usai_harness import BatchResult
+
+    events: list[ProgressEvent] = []
+    client = _client(tmp_path, env_path, _OKTransport())
+    try:
+        await client.batch(_tasks(3), progress=events.append)
+    finally:
+        await client.close()
+    capsys.readouterr()
+
+    assert len(events) == 3
+    for e in events:
+        assert e.result is not None
+        assert isinstance(e.result, BatchResult)
+
+
+@pytest.mark.asyncio
+async def test_event_result_task_id_matches_event_task_id(
+    tmp_path, env_path, capsys,
+):
+    """The task identifier on the event matches the identifier on the
+    embedded result. Callers can rely on either field."""
+    events: list[ProgressEvent] = []
+    client = _client(tmp_path, env_path, _OKTransport())
+    try:
+        await client.batch(_tasks(4), progress=events.append)
+    finally:
+        await client.close()
+    capsys.readouterr()
+
+    for e in events:
+        assert e.result.task_id == e.task_id
+
+
+@pytest.mark.asyncio
+async def test_event_result_response_carries_full_dict(
+    tmp_path, env_path, capsys,
+):
+    """The result's `response` field carries the full provider response
+    dict — caller can extract content, usage, model, etc. from the
+    callback without waiting for batch() to return."""
+    extracted: list[str] = []
+
+    def collect_content(event):
+        if event.result and event.result.response:
+            choices = event.result.response.get("choices", [])
+            if choices:
+                content = choices[0].get("message", {}).get("content", "")
+                extracted.append(content)
+
+    client = _client(tmp_path, env_path, _OKTransport())
+    try:
+        await client.batch(_tasks(3), progress=collect_content)
+    finally:
+        await client.close()
+    capsys.readouterr()
+
+    assert extracted == ["ok", "ok", "ok"]
+
+
+@pytest.mark.asyncio
+async def test_event_result_carries_failure_details(tmp_path, env_path, capsys):
+    """For failed tasks, the embedded result preserves status_code and
+    error so callers can route per-task error handling from the callback."""
+    events: list[ProgressEvent] = []
+    transport = _FlakyTransport(fail_payload_substrings=["q1"])
+    client = _client(tmp_path, env_path, transport)
+    try:
+        await client.batch(_tasks(3), progress=events.append)
+    finally:
+        await client.close()
+    capsys.readouterr()
+
+    by_id = {e.task_id: e for e in events}
+    failed_event = by_id["t0001"]
+    assert failed_event.success is False
+    assert failed_event.result is not None
+    assert failed_event.result.success is False
+    assert failed_event.result.status_code == 500
+    assert failed_event.result.error is not None
+
+
+@pytest.mark.asyncio
+async def test_text_progress_unchanged_by_result_field(
+    tmp_path, env_path, capsys,
+):
+    """text_progress does not reference event.result; output format is
+    identical to 0.8.1."""
+    client = _client(tmp_path, env_path, _OKTransport())
+    try:
+        await client.batch(_tasks(2), job_name="unchanged")
+    finally:
+        await client.close()
+    out = capsys.readouterr().out
+    # The standard 0.8.1 line shape: timestamp, label, count, percent, eta.
+    assert "[unchanged]" in out
+    assert "1/2" in out and "2/2" in out
+    assert "elapsed" in out and "eta" in out
+    # No embedded result/response payload leakage.
+    assert "BatchResult" not in out
+    assert "choices" not in out

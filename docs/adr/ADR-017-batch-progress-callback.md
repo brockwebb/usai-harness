@@ -98,3 +98,21 @@ The default flip aligns the project convention "silent failures are bugs" with t
 The "stderr progress bar" alternative rejected in 0.8.0 remains rejected; `text_progress` is plain `print(...)`, not a bar (no `\r` rewrites, no terminal-control sequences, no curses, no tqdm). One line per terminal-state task. That's the entire surface.
 
 *Source:* CC task 2026-05-06_builtin_text_progress.
+
+## Amendment, 2026-05-06 — `result` field on `ProgressEvent` (0.9.0)
+
+The 0.8.0 `ProgressEvent` carried counts and timing but not the task's actual result. Callers who wanted per-task processing — checkpointing, streaming JSONL, persisting raw responses — could not act from inside the callback; they had to wait for `batch()` to return the full results list and then loop. That defeats the purpose of streaming progress.
+
+The harness already had the `BatchResult` at the exact moment it fired the progress event (the `result` variable in the worker loop, immediately after `_results.append(result)`). It just wasn't passed through. The amendment passes it through.
+
+Two design alternatives were considered and the first chosen:
+
+- **A: add a `result` field to `ProgressEvent`.** One callback signature, no API surface expansion. Adds a heavier field (the full response dict) to a previously light dataclass — `asdict(event)` and `len(fields(event))` see a new field. Memory profile of an event grows. Backwards-compatible: existing callbacks that ignore the field continue to work.
+
+- **B: separate `on_result` callback on `batch()`.** Cleaner separation of concerns (`progress` for visibility, `on_result` for data). But two callbacks, two call sites in the worker loop, more API surface, and the common case is "I want both" — which forces the caller to wire two functions for one job.
+
+Option A wins on the common-case argument. The `result` field is `Optional[BatchResult]` for forward compatibility, but under all 0.9.0 emission paths it is always populated. `text_progress` and other count-only callbacks ignore the field; their signatures and behavior do not change. Auth-halted and deferred tasks still do not fire (per ADR-002 / FR-064 contract); when they retry to terminal state, that emit carries the result.
+
+Implementation surface: one new field on `ProgressEvent`, one new kwarg on `_ProgressTracker.emit`, one updated call site in `worker_pool._worker_loop`. `BatchResult` (renamed from the prior internal name `TaskResult` for symmetry with the public API) gains a public export from `usai_harness/__init__.py` so callers can write `from usai_harness import BatchResult` for type hints. The class shape is unchanged; tests and downstream code that imported `TaskResult` from `usai_harness.worker_pool` need to switch to `BatchResult`.
+
+*Source:* CC task 2026-05-06_result_callback.

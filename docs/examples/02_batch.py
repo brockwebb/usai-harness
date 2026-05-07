@@ -8,7 +8,7 @@ provider. Run from the project root:
 
     python docs/examples/02_batch.py
 
-Note on the API surface: `client.batch()` returns `list[TaskResult]`
+Note on the API surface: `client.batch()` returns `list[BatchResult]`
 and prints a formatted post-run report to stdout via the internal
 report module. There is no public `BatchReport` dataclass; aggregate
 metrics in this script are computed directly from the result list.

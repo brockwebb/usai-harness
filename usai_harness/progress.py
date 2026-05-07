@@ -24,7 +24,10 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Callable, Optional
+from typing import TYPE_CHECKING, Callable, Optional
+
+if TYPE_CHECKING:
+    from usai_harness.worker_pool import BatchResult
 
 log = logging.getLogger("usai_harness.progress")
 
@@ -41,6 +44,16 @@ class ProgressEvent:
     Events fire in *completion order*, which is not submission order
     under concurrent execution. A task `b0042` may complete before
     `b0041` and arrive in the callback first.
+
+    Per the ADR-017 amendment (2026-05-06 / 0.9.0), `result` carries the
+    full `BatchResult` for the completed task — payload, metadata,
+    response body, status, error, latency. Callers can use it to
+    checkpoint per task, stream JSONL, or extract response content
+    incrementally without waiting for `batch()` to return. `text_progress`
+    and other count-only callbacks ignore the field. The type is
+    `Optional` for forward-compatibility with future event sources that
+    might fire without an associated result; under all 0.9.0 emission
+    paths, `result` is always populated.
     """
     job_name: str
     task_id: str
@@ -52,6 +65,7 @@ class ProgressEvent:
     status_code: Optional[int]
     latency_ms: float
     elapsed_seconds: float
+    result: Optional["BatchResult"] = None
 
 
 class _ProgressTracker:
@@ -96,6 +110,7 @@ class _ProgressTracker:
         success: bool,
         status_code: Optional[int],
         latency_ms: float,
+        result: Optional["BatchResult"] = None,
     ) -> None:
         self._completed += 1
         if success:
@@ -113,6 +128,7 @@ class _ProgressTracker:
             status_code=status_code,
             latency_ms=latency_ms,
             elapsed_seconds=time.monotonic() - self._start_time,
+            result=result,
         )
         try:
             self._callback(event)

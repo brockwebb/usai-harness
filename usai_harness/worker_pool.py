@@ -56,7 +56,7 @@ class Task:
 
 
 @dataclass
-class TaskResult:
+class BatchResult:
     """Result of a completed task."""
     task_id: str
     payload: dict
@@ -80,13 +80,13 @@ class WorkerPool:
 
         self._queue: Optional[asyncio.Queue] = None
         self._workers: list[asyncio.Task] = []
-        self._results: list[TaskResult] = []
+        self._results: list[BatchResult] = []
         self._halt_event: Optional[asyncio.Event] = None
         self._halt_reason: Optional[AuthHaltError] = None
         self._tracker = None
 
     @property
-    def results(self) -> list[TaskResult]:
+    def results(self) -> list[BatchResult]:
         """Sorted snapshot of collected results. Safe to read after a halt."""
         return sorted(self._results, key=lambda r: r.task_id)
 
@@ -94,7 +94,7 @@ class WorkerPool:
         self,
         tasks: list[Task],
         tracker=None,
-    ) -> list[TaskResult]:
+    ) -> list[BatchResult]:
         """Process all tasks across n_workers and return deterministic results.
 
         Raises AuthHaltError (after gathering in-flight workers) if the endpoint
@@ -161,6 +161,7 @@ class WorkerPool:
                         success=result.success,
                         status_code=result.status_code,
                         latency_ms=result.latency_ms,
+                        result=result,
                     )
             finally:
                 self._queue.task_done()
@@ -182,7 +183,7 @@ class WorkerPool:
             finally:
                 self._queue.task_done()
 
-    async def _process_task(self, task: Task) -> TaskResult:
+    async def _process_task(self, task: Task) -> BatchResult:
         last_status: Optional[int] = None
         last_latency_ms: float = 0.0
 
@@ -220,7 +221,7 @@ class WorkerPool:
 
             if 200 <= status < 300:
                 self.rate_limiter.record_success()
-                return TaskResult(
+                return BatchResult(
                     task_id=task.task_id,
                     payload=task.payload,
                     metadata=task.metadata,
@@ -267,8 +268,8 @@ class WorkerPool:
 
     @staticmethod
     def _failed(task: Task, *, error: str, status_code: Optional[int] = None,
-                latency_ms: float = 0.0, response: Optional[dict] = None) -> TaskResult:
-        return TaskResult(
+                latency_ms: float = 0.0, response: Optional[dict] = None) -> BatchResult:
+        return BatchResult(
             task_id=task.task_id,
             payload=task.payload,
             metadata=task.metadata,
@@ -279,7 +280,7 @@ class WorkerPool:
             success=False,
         )
 
-    async def shutdown(self) -> list[TaskResult]:
+    async def shutdown(self) -> list[BatchResult]:
         """Cancel in-flight workers and drain remaining queued tasks as failures."""
         for w in self._workers:
             if not w.done():

@@ -6,6 +6,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+### Breaking
+- The dataclass returned by `USAiClient.batch()` (each element of the result list, and now also `ProgressEvent.result`) is renamed `BatchResult` (was internally `TaskResult` in `usai_harness.worker_pool`). The class fields and shape are unchanged; only the name moves. Callers that imported `from usai_harness.worker_pool import TaskResult` must switch to `from usai_harness import BatchResult`. The previous name is not retained as an alias. (ADR-017 amendment, 2026-05-06)
+
+### Added
+- `ProgressEvent.result: Optional[BatchResult]` — the completed task's full `BatchResult` is now delivered alongside counts and timing. Callers can checkpoint per task, stream JSONL, or extract response content from inside the progress callback without waiting for `batch()` to return. `text_progress` and other count-only callbacks ignore the field; behavior is unchanged for them. Under all 0.9.0 emission paths the field is always populated; `Optional` is forward-compatibility typing. (ADR-017 amendment)
+- `BatchResult` exported from `usai_harness` for type hints and `isinstance` checks.
+
 ## [0.8.1] - 2026-05-06
 
 ### Added
