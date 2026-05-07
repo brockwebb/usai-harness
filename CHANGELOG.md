@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and 
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-05-07
+
 ### Breaking
 - The dataclass returned by `USAiClient.batch()` (each element of the result list, and now also `ProgressEvent.result`) is renamed `BatchResult` (was internally `TaskResult` in `usai_harness.worker_pool`). The class fields and shape are unchanged; only the name moves. Callers that imported `from usai_harness.worker_pool import TaskResult` must switch to `from usai_harness import BatchResult`. The previous name is not retained as an alias. (ADR-017 amendment, 2026-05-06)
 
@@ -163,7 +165,8 @@ First release. Pip-installable Python client library for rate-limited, model-agn
 - Non-HTTPS endpoints emit a TLS warning on first request.
 - `model_requested` vs `model_returned` surfaces silent model substitution by the endpoint.
 
-[Unreleased]: ../../compare/0.8.1...HEAD
+[Unreleased]: ../../compare/0.9.0...HEAD
+[0.9.0]: ../../compare/0.8.1...0.9.0
 [0.8.1]: ../../compare/0.8.0...0.8.1
 [0.8.0]: ../../compare/0.7.1...0.8.0
 [0.7.1]: ../../compare/0.7.0...0.7.1

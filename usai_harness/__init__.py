@@ -12,4 +12,4 @@ from usai_harness.progress import ProgressEvent, text_progress
 from usai_harness.worker_pool import BatchResult
 
 __all__ = ["USAiClient", "BatchResult", "ProgressEvent", "text_progress"]
-__version__ = "0.8.1"
+__version__ = "0.9.0"

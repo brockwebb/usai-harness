@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "usai-harness"
-version = "0.8.1"
+version = "0.9.0"
 description = "Rate-limited, model-agnostic LLM client library for USAi"
 readme = "README.md"
 license = {text = "MIT"}
