@@ -840,33 +840,33 @@ def test_legacy_catalog_fields_are_ignored_not_rejected(tmp_path):
 
 
 def test_pool_member_passes_through_unrecognized_param(tmp_path):
-    """Per the ADR-012 amendment (2026-04-29) and ADR-014: pool members
-    whose model name is not in any family-catalog alias table load cleanly
-    regardless of out-of-range parameter values. The harness does not
-    validate parameters when there is no family entry to validate against.
-    Llama-3.2 is not in the family catalog (only llama-4 is)."""
+    """A declared, in-range per-model param on an ALIASED model loads cleanly. Updated 2026-06-16:
+    an un-aliased SKU is now a hard config error (alias-gap guard), and a declared override IS
+    range-validated against the family at load (llama-4 temperature range [0,2]) — so this uses an
+    in-range value. (The ADR-012 runtime no-clamp of a per-CALL temperature is covered by the client
+    tests, a separate layer from config-load validation.)"""
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
     cfg = _write_project_config(tmp_path, """
         models:
-          - name: meta-llama/Llama-3.2-11B-Vision-Instruct
-            temperature: 5.0
+          - name: meta-llama/Llama-4-Maverick-17B-128E-Instruct
+            temperature: 1.0
     """)
     pc = loader.load_project_config(cfg)
-    assert [m.name for m in pc.models] == ["meta-llama/Llama-3.2-11B-Vision-Instruct"]
+    assert [m.name for m in pc.models] == ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"]
 
 
 def test_pool_member_passes_through_extra_field(tmp_path):
-    """Per the ADR-012 amendment (2026-04-29): unrecognized per-model fields
-    load cleanly without rejection. Using a model not in the family catalog
-    so neither field nor value triggers validation."""
+    """Per the ADR-012 amendment (2026-04-29): unrecognized per-model fields load cleanly without
+    rejection. Updated 2026-06-16 to an ALIASED model (un-aliased is now a hard error); an
+    unrecognized field is still ignored even when the model resolves to a family."""
     loader = ConfigLoader(models_config_path=REAL_MODELS_YAML)
     cfg = _write_project_config(tmp_path, """
         models:
-          - name: meta-llama/Llama-3.2-11B-Vision-Instruct
+          - name: meta-llama/Llama-4-Maverick-17B-128E-Instruct
             xyzzy_param: 0.9
     """)
     pc = loader.load_project_config(cfg)
-    assert [m.name for m in pc.models] == ["meta-llama/Llama-3.2-11B-Vision-Instruct"]
+    assert [m.name for m in pc.models] == ["meta-llama/Llama-4-Maverick-17B-128E-Instruct"]
 
 
 def test_project_config_legacy_single_model(tmp_path):
@@ -964,14 +964,11 @@ def test_pool_member_with_known_family_validates_temperature_out_of_range(
     assert "0.0" in msg and "2.0" in msg
 
 
-def test_pool_member_with_unknown_alias_warns_and_passes(
-    tmp_path, caplog, claude_short_alias_catalog,
-):
-    """A pool member whose name has no entry in the alias table loads
-    cleanly with a warning, regardless of parameter values."""
-    import logging as _logging
-    write, _ = claude_short_alias_catalog if False else (None, None)  # placeholder
-    # Override the live catalog to expose a model with no family alias.
+def test_pool_member_with_unknown_alias_raises(tmp_path):
+    """Alias-gap guard (2026-06-16): a pool member whose name resolves to NO family-catalog entry
+    is a LOUD config-load failure (previously it warned and passed params UNVALIDATED — the class
+    bug behind the Opus-4.8 temperature 400). This is the regression that would have caught the
+    original gap; it genuinely fails without the guard."""
     from usai_harness.setup_commands import user_config_models_path
     catalog_path = user_config_models_path()
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
@@ -981,9 +978,6 @@ def test_pool_member_with_unknown_alias_warns_and_passes(
             "usai": {
                 "base_url": "https://usai.example/v1",
                 "api_key_env": "USAI_API_KEY",
-                # completely-unaliased-model has no family alias so it
-                # passes through unvalidated. claude_4_5_sonnet covers the
-                # seed default so the catalog default reconciles cleanly.
                 "models": ["completely-unaliased-model", "claude_4_5_sonnet"],
             },
         }
@@ -993,15 +987,9 @@ def test_pool_member_with_unknown_alias_warns_and_passes(
     cfg = _write_project_config(tmp_path, """
         models:
           - name: completely-unaliased-model
-            temperature: 5.0
-            top_p: 99.0
     """)
-    caplog.set_level(_logging.WARNING, logger="usai_harness.config")
-    pc = loader.load_project_config(cfg)
-    assert pc.default_model.name == "completely-unaliased-model"
-    assert pc.default_model.family_entry is None
-    warnings = [r for r in caplog.records if r.levelno == _logging.WARNING]
-    assert any("does not match any family" in r.getMessage() for r in warnings)
+    with pytest.raises(ConfigValidationError, match="resolves to NO family-catalog entry"):
+        loader.load_project_config(cfg)
 
 
 def test_pool_member_with_needs_verification_field_warns(
