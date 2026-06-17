@@ -626,7 +626,6 @@ class ConfigLoader:
             pool_specs, default_model_name, config_path,
         )
         pool = self._validate_pool(pool_specs, config_path)
-        self._validate_pool_param_overrides(pool, pool_specs, config_path)
 
         if default_model_name is None:
             if len(pool) == 1:
@@ -670,6 +669,10 @@ class ConfigLoader:
                     f"client per provider."
                 )
             provider = next(iter(providers_in_pool))
+
+        # Alias-gap guard LAST: only after structural checks (pool validity, default_model,
+        # provider consistency) pass do we require every member to resolve to a family.
+        self._validate_pool_param_overrides(pool, pool_specs, config_path)
 
         temperature = float(raw.get("temperature", 0.0))
         max_tokens_raw = raw.get("max_tokens")
@@ -843,14 +846,20 @@ class ConfigLoader:
         """
         for spec, model in zip(specs, pool):
             if model.family_entry is None:
-                log.warning(
-                    "Pool member '%s' (provider '%s') does not match any "
-                    "family-catalog alias; per-model parameter validation "
-                    "is skipped for this member. Field values pass through "
-                    "to the transport unchanged.",
-                    model.name, model.provider,
+                # ALIAS-GAP GUARD (2026-06-16): an un-aliased pool SKU used to WARN and pass params
+                # to the transport UNVALIDATED — the class bug behind the Opus-4.8 temperature 400
+                # (the oracle SKU matched no alias, so temperature was sent to a model that rejects
+                # it). A pool member that resolves to no family is now a LOUD config-load failure,
+                # caught the moment the pool changes rather than silently at request time.
+                raise ConfigValidationError(
+                    f"Pool member '{model.name}' (provider '{model.provider}') in {config_path} "
+                    f"resolves to NO family-catalog entry, so its parameters would pass to the "
+                    f"transport UNVALIDATED (the alias-gap class bug: this is how Opus 4.8 silently "
+                    f"sent a rejected 'temperature' and 400'd). Add an alias row under "
+                    f"`provider_aliases.{model.provider}` in families.yaml mapping "
+                    f"'{model.name}' to its family key (preserve the major version, e.g. "
+                    f"claude-opus-4)."
                 )
-                continue
             for param_name, value in spec.items():
                 if param_name == "name":
                     continue
