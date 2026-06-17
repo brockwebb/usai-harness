@@ -60,3 +60,19 @@ def test_family_catalog_list_families():
     assert "gemini-2.5" in families
     assert "gpt-5" in families
     assert "o-reasoning" in families
+
+
+def test_active_usai_pool_skus_resolve_no_alias_gap():
+    """Regression for the alias-gap class: the ACTUAL USAi pool SKUs (oracle + eval panel) must
+    resolve to families. Before the fix these matched no alias -> validation skipped -> params
+    passed unvalidated -> Opus 4.8 400'd on temperature."""
+    catalog = FamilyCatalog()
+    assert catalog.family_key("usai", "claude_4_8_opus") == "claude-opus-4"
+    assert catalog.family_key("usai", "claude_4_6_sonnet") == "claude-sonnet-4"
+    assert catalog.family_key("usai", "gpt-5.5-latest-guardrails-defaultv2") == "gpt-5"
+    assert catalog.family_key("usai", "grok-4-latest-guardrails-defaultv2") == "grok-4"
+    # and they carry the correct temperature acceptance from their family
+    assert catalog.resolve("usai", "claude_4_8_opus")["accepts_temperature"]["value"] is False
+    assert catalog.resolve("usai", "claude_4_6_sonnet")["accepts_temperature"]["value"] is False
+    assert catalog.resolve("usai", "gpt-5.5-latest-guardrails-defaultv2")["accepts_temperature"]["value"] is True
+    assert catalog.resolve("usai", "grok-4-latest-guardrails-defaultv2")["accepts_temperature"]["value"] is True
