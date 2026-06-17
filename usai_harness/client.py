@@ -191,10 +191,10 @@ class USAiClient:
                     api_key=self._api_key,
                     model=model_name,
                     messages=messages,
-                    temperature=temp,
+                    temperature=self._gate_temperature(model_name, temp),
                     max_tokens=mt,
                     system_prompt=sp,
-                    **kwargs,
+                    **self._gate_kwargs(model_name, kwargs),
                 )
             except Exception as e:
                 latency_ms = (time.monotonic() - start) * 1000.0
@@ -378,6 +378,7 @@ class USAiClient:
 
     async def _make_request(self, payload: dict) -> tuple[dict, int]:
         """request_fn handed to the worker pool."""
+        model = payload["model"]
         extra = {
             k: v for k, v in payload.items()
             if k not in {"messages", "model", "temperature",
@@ -386,13 +387,36 @@ class USAiClient:
         return await self._transport.send(
             base_url=self._base_url,
             api_key=self._api_key,
-            model=payload["model"],
+            model=model,
             messages=payload["messages"],
-            temperature=payload["temperature"],
+            temperature=self._gate_temperature(model, payload["temperature"]),
             max_tokens=payload["max_tokens"],
             system_prompt=payload.get("system_prompt"),
-            **extra,
+            **self._gate_kwargs(model, extra),
         )
+
+    # ---- family-catalog parameter gating (ADR: omit params a model's family rejects) ------
+
+    def _family_accepts(self, model_name: str, param: str) -> bool:
+        """Whether `model_name`'s family catalog accepts `param` (e.g. 'temperature', 'top_p').
+        Unknown model, no family match, or an unverified/non-bool field -> True (tight scope: never
+        strip a parameter we cannot prove unsupported)."""
+        mc = next((m for m in self.config.models if m.name == model_name), None)
+        entry = (getattr(mc, "family_entry", None) or {}) if mc is not None else {}
+        spec = entry.get(f"accepts_{param}")
+        val = spec.get("value") if isinstance(spec, dict) else None
+        return val if isinstance(val, bool) else True
+
+    def _gate_temperature(self, model_name: str, temperature):
+        """temperature, or None (omitted on the wire) if the family rejects it."""
+        return temperature if self._family_accepts(model_name, "temperature") else None
+
+    def _gate_kwargs(self, model_name: str, kwargs: dict) -> dict:
+        """Null out family-rejected sampling params in extra kwargs (transport drops None)."""
+        out = dict(kwargs)
+        if "top_p" in out and not self._family_accepts(model_name, "top_p"):
+            out["top_p"] = None
+        return out
 
     def _record_outcome(
         self,

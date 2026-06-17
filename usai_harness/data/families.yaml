@@ -290,6 +290,14 @@ provider_aliases:
     claude_4_5_sonnet: claude-sonnet-4
     claude_4_5_opus: claude-opus-4
     claude_4_5_haiku: claude-haiku-4
+    # Active USAi pool SKUs (2026-06): the oracle + the three eval-panel members. Added 2026-06-16
+    # to close the alias gap — without these they matched no family alias, so per-model parameter
+    # validation was skipped and temperature passed UNVALIDATED to the transport (the Claude lines
+    # reject temperature -> HTTP 400 "temperature is deprecated for this model").
+    claude_4_8_opus: claude-opus-4
+    claude_4_6_sonnet: claude-sonnet-4
+    gpt-5.5-latest-guardrails-defaultv2: gpt-5
+    grok-4-latest-guardrails-defaultv2: grok-4
     claude-sonnet-4-5-20241022: claude-sonnet-4
     claude-opus-4-5-20250521: claude-opus-4
     claude-3-5-haiku-20241022: claude-haiku-4

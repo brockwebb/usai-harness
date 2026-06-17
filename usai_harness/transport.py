@@ -41,12 +41,17 @@ class BaseTransport(ABC):
         api_key: str,
         model: str,
         messages: list[dict],
-        temperature: float = 0.0,
+        temperature: Optional[float] = None,
         max_tokens: int = 4096,
+        top_p: Optional[float] = None,
         system_prompt: Optional[str] = None,
         **kwargs,
     ) -> tuple[dict, int]:
-        """Send a completion request. Return (response_body, status_code)."""
+        """Send a completion request. Return (response_body, status_code).
+
+        `temperature`/`top_p` are OMITTED from the wire payload when None — the caller passes None
+        for a model whose family catalog rejects the parameter (e.g. Claude rejects temperature).
+        An explicit value (incl. 0.0) is sent."""
         ...
 
     @abstractmethod
@@ -100,8 +105,9 @@ class HttpxTransport(BaseTransport):
         api_key: str,
         model: str,
         messages: list[dict],
-        temperature: float = 0.0,
+        temperature: Optional[float] = None,
         max_tokens: int = 4096,
+        top_p: Optional[float] = None,
         system_prompt: Optional[str] = None,
         **kwargs,
     ) -> tuple[dict, int]:
@@ -109,13 +115,15 @@ class HttpxTransport(BaseTransport):
         if system_prompt and not (msgs and msgs[0].get("role") == "system"):
             msgs = [{"role": "system", "content": system_prompt}] + msgs
 
-        payload = {
-            "model": model,
-            "messages": msgs,
-            "temperature": temperature,
-            "max_tokens": max_tokens,
-        }
-        payload.update(kwargs)
+        # temperature/top_p are OMITTED when None (a model whose family rejects the param). An
+        # explicit value (incl. 0.0) is sent. None-valued extras are dropped so a gated param
+        # never leaks onto the wire as a null.
+        payload = {"model": model, "messages": msgs, "max_tokens": max_tokens}
+        if temperature is not None:
+            payload["temperature"] = temperature
+        if top_p is not None:
+            payload["top_p"] = top_p
+        payload.update({k: v for k, v in kwargs.items() if v is not None})
 
         url = f"{base_url.rstrip('/')}/chat/completions"
         headers = {

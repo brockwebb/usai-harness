@@ -416,17 +416,56 @@ async def test_client_batch_per_task_invalid_model(tmp_path, env_path):
 
 
 async def test_complete_forwards_temperature_to_transport(tmp_path, env_path):
-    """Per the ADR-012 amendment (2026-04-29): per-call temperature is
-    forwarded to the transport unchanged, regardless of any catalog range."""
-    cfg = _multi_pool_config(tmp_path)
+    """Per ADR-012: per-call temperature is forwarded UNCHANGED (no clamping to a catalog range)
+    for a model whose family ACCEPTS temperature. (Updated 2026-06-16: the original used a
+    temperature-REJECTING model, which is now correctly gated to None — param-acceptance gating is
+    covered by test_temperature_gated_off_for_temperature_rejecting_model. This test keeps ADR-012's
+    no-range-clamp intent on an accepting model: 5.0 exceeds gemini's [0,2] range yet is forwarded.)"""
+    cfg = tmp_path / "project.yaml"
+    cfg.write_text("provider: usai\nmodels:\n  - name: gemini-2.5-flash\n"
+                   "default_model: gemini-2.5-flash\n")
     mock = MockTransport()
     client = _client(tmp_path, env_path, transport=mock, config_path=cfg)
     try:
         await client.complete(
             messages=[{"role": "user", "content": "hi"}],
-            model="claude-sonnet-4-5-20241022",
+            model="gemini-2.5-flash",
             temperature=5.0,
         )
     finally:
         await client.close()
-    assert mock.calls[0]["temperature"] == 5.0
+    assert mock.calls[0]["temperature"] == 5.0   # accepting family -> forwarded unchanged, no clamp
+
+
+async def test_temperature_gated_off_for_temperature_rejecting_model(tmp_path, env_path):
+    """The default pool model (claude-sonnet-4-5 -> claude-sonnet-4, accepts_temperature: false)
+    must NOT send temperature: the client gates it to None so transport omits it on the wire.
+    This is the fix for the alias-gap 400 (temperature deprecated for Claude on USAi)."""
+    mock = MockTransport()
+    client = _client(tmp_path, env_path, transport=mock)
+    try:
+        await client.complete(messages=[{"role": "user", "content": "hi"}])
+    finally:
+        await client.close()
+    assert mock.calls[0]["temperature"] is None
+
+
+async def test_temperature_preserved_for_accepting_model_batch(tmp_path, env_path, capsys):
+    """Regression guard: a temperature-accepting model (gemini-2.5, accepts_temperature: true)
+    must STILL carry temperature through the batch path. The gate strips ONLY rejecting models."""
+    cfg = tmp_path / "models.yaml"
+    cfg.write_text(
+        "provider: usai\n"
+        "temperature: 0.5\n"
+        "models:\n"
+        "  - name: gemini-2.5-flash\n"
+        "default_model: gemini-2.5-flash\n"
+    )
+    mock = MockTransport()
+    client = _client(tmp_path, env_path, transport=mock, config_path=cfg)
+    try:
+        await client.batch([{"messages": [{"role": "user", "content": "hi"}]}], job_name="t")
+    finally:
+        await client.close()
+    capsys.readouterr()
+    assert mock.calls[0]["temperature"] == 0.5

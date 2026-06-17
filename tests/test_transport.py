@@ -420,3 +420,46 @@ async def test_error_body_capture_failure_is_silent(monkeypatch):
 
     assert status == 503
     assert "error_body" not in body
+
+
+async def test_httpx_transport_omits_temperature_and_top_p_when_none():
+    """temperature/top_p must be ABSENT on the wire when None (the omit-when-None half of the
+    param-gating fix: a model that rejects temperature must not see the key at all)."""
+    captured = {}
+
+    def handler(request):
+        import json
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}, "model": "m"})
+
+    t = HttpxTransport(transport=_mock_httpx(handler))
+    try:
+        await t.send(base_url="https://e.com/v1", api_key="K", model="m",
+                     messages=[{"role": "user", "content": "hi"}])  # no temperature / top_p
+    finally:
+        await t.close()
+    assert "temperature" not in captured["body"]
+    assert "top_p" not in captured["body"]
+    assert "max_tokens" in captured["body"]          # max_tokens still sent (unchanged)
+
+
+async def test_httpx_transport_includes_temperature_and_top_p_when_set():
+    captured = {}
+
+    def handler(request):
+        import json
+        captured["body"] = json.loads(request.content)
+        return httpx.Response(200, json={
+            "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}, "model": "m"})
+
+    t = HttpxTransport(transport=_mock_httpx(handler))
+    try:
+        await t.send(base_url="https://e.com/v1", api_key="K", model="m",
+                     messages=[{"role": "user", "content": "hi"}], temperature=0.0, top_p=0.9)
+    finally:
+        await t.close()
+    assert captured["body"]["temperature"] == 0.0   # explicit 0.0 IS sent (not confused with None)
+    assert captured["body"]["top_p"] == 0.9
