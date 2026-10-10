@@ -1,0 +1,15 @@
+#!/bin/sh
+# Seldon's commit gate (AD-036-R4; HOOK-001, AD-036 ADDENDUM 02). Tracked and run in place:
+# `seldon hooks install` points core.hooksPath at this directory; nothing is copied into .git/.
+# It judges the STAGED governed files only. `git commit --no-verify` is the one way past it, and
+# `seldon verify` reports a design note committed that way as hook_bypassed.
+py="$(git config --get seldon.python)"
+if [ -n "$py" ] && [ -x "$py" ]; then
+  exec "$py" -m seldon hooks pre-commit
+fi
+if command -v seldon >/dev/null 2>&1; then
+  exec seldon hooks pre-commit
+fi
+echo "seldon commit gate: no interpreter: git config seldon.python is unset or not executable" >&2
+echo "and seldon is not on PATH. Run \`seldon hooks install\` in this repository." >&2
+exit 1
