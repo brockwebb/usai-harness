@@ -1,0 +1,7 @@
+# AD-036-R4 baseline for usai-harness: every gated design note on usai-harness main when the prior-art gate reached this
+# repository (SQ-010 Part 0, 2026-10-11, main at 542f52debac48df74dbd5d6cf1516a6d8310c634; read from `git ls-files`,
+# so an untracked note is not baseline). These are grandfathered, not re-litigated: the gate
+# (the commit hook, `seldon verify`, `seldon cc register`) applies to a note NOT listed here. Addenda and errata are
+# exempt by glob and not listed. Never extended: a note added after this list needs a passing
+# `seldon prior-art verify`.
+# No gated design note was on main when the gate reached this repository.
