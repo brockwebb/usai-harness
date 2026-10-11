@@ -13,3 +13,12 @@ shared_ontology:
   source: /Users/brock/Documents/GitHub/seldon/ontology
   vocabularies:
   - validity/VALIDITY_VOCABULARY.md
+
+prior_art:
+  # AD-036 (seldon): the prior-art receipts gate, by REFERENCE to seldon's one definition, never a copy (SQ-010
+  # Part 0; seldon docs/design/AD-036_ADDENDUM_03_prior_art_by_reference.md). The corpus paths resolve from seldon's
+  # file; the log, the design directory, the baseline and the verdict ledger resolve from this repository. Only the
+  # baseline is this repository's own: the notes on main when the gate reached it, grandfathered.
+  ref: ../seldon/seldon.yaml#prior_art
+  gate:
+    baseline: docs/design/AD-036_baseline.txt
